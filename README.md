@@ -81,3 +81,47 @@ Try typing commands into the AI Assistant chat window:
 - `src/components/EventModal.tsx` — Manual event creation and editing modal.
 - `src/data/initialEvents.ts` — Pre-seeded realistic schedule.
 - `server.ts` — Express full-stack backend with `@google/genai` integration and fallback engine.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+secret message below....
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+hi :D
