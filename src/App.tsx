@@ -241,23 +241,19 @@ export default function App() {
               setCurrentDate(parseDate(newEvt.startDate));
             }
           } else if (act.type === 'update' && act.event) {
-            setEvents((prev) =>
-              prev.map((e) => {
-                if (e.id === act.event.id || e.title.toLowerCase() === (act.event.title || '').toLowerCase()) {
-                  const updated = { ...e, ...act.event };
-                  actionsApplied.push({
-                    type: 'update',
-                    eventTitle: updated.title,
-                    details: `Updated time to ${formatTime12h(updated.startTime)} – ${formatTime12h(updated.endTime)}`,
-                  });
-                  return updated;
-                }
-                return e;
-              })
-            );
-            addToast('info', 'Event Updated', `Updated schedule for ${act.event.title || 'event'}.`);
+            // Server resolves updates to a concrete event id (important for recurring events sharing a title)
+            const target = events.find((e) => e.id === act.event.id);
+            if (!target) return;
+            const updated: CalendarEvent = { ...target, ...act.event };
+            setEvents((prev) => prev.map((e) => (e.id === updated.id ? updated : e)));
+            actionsApplied.push({
+              type: 'update',
+              eventTitle: updated.title,
+              details: `${updated.startDate} • ${formatTime12h(updated.startTime)} – ${formatTime12h(updated.endTime)}`,
+            });
+            addToast('info', 'Event Updated', `Updated schedule for ${updated.title}.`);
           } else if (act.type === 'delete' && act.event) {
-            setEvents((prev) => prev.filter((e) => e.id !== act.event.id && e.title.toLowerCase() !== (act.event.title || '').toLowerCase()));
+            setEvents((prev) => prev.filter((e) => e.id !== act.event.id));
             actionsApplied.push({
               type: 'delete',
               eventTitle: act.event.title || 'Event',
