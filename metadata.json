@@ -1,0 +1,6 @@
+{
+  "name": "Chronos AI - Smart Calendar Assistant",
+  "description": "A smart calendar prototype with integrated Gemini AI for natural language scheduling, conflict checking, and schedule management.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
