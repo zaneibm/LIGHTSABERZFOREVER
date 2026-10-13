@@ -282,10 +282,43 @@ function buildScheduleInsights(events: CalendarEventPayload[], todayStr: string)
   return days;
 }
 
+// Resolve the current date/time. Prefers the client's local wall-clock (ISO string with offset),
+// otherwise uses the server clock in the given IANA timezone (or UTC if it is invalid).
+function resolveNow(currentDateTime: unknown, timeZone: string): { todayStr: string; nowMinutes: number; iso: string } {
+  if (typeof currentDateTime === 'string') {
+    const m = currentDateTime.match(/^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2})/);
+    if (m && isValidDate(m[1]) && Number(m[2]) < 24 && Number(m[3]) < 60) {
+      return { todayStr: m[1], nowMinutes: Number(m[2]) * 60 + Number(m[3]), iso: currentDateTime.slice(0, 40) };
+    }
+  }
+  let tz = 'UTC';
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone });
+    tz = timeZone;
+  } catch {
+    // invalid timezone: keep UTC
+  }
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat('en-CA', {
+      timeZone: tz,
+      hourCycle: 'h23',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+    })
+      .formatToParts(new Date())
+      .map((p) => [p.type, p.value])
+  );
+  const todayStr = `${parts.year}-${parts.month}-${parts.day}`;
+  return { todayStr, nowMinutes: Number(parts.hour) * 60 + Number(parts.minute), iso: `${todayStr}T${parts.hour}:${parts.minute} (${tz})` };
+}
+
 // Validate, resolve and expand the actions returned by the model.
 // - update/delete are resolved to real event ids (unknown targets are dropped)
 // - schedule supports autoFindSlot, recurrence, conflict detection with alternatives
-function processModelActions(rawActions: any[], events: CalendarEventPayload[], todayStr: string) {
+function processModelActions(rawActions: any[], events: CalendarEventPayload[], todayStr: string, nowMinutes: number) {
   const out: any[] = [];
   const warnings: string[] = [];
   const infos: string[] = [];
@@ -353,8 +386,11 @@ function processModelActions(rawActions: any[], events: CalendarEventPayload[], 
     let firstDate = startDate;
     let firstEndDate = endDate;
     if (act.autoFindSlot) {
+      // Never book in the past: start no earlier than today, and no earlier than now (rounded up to 15 min) if today
+      const searchDate = startDate < todayStr ? todayStr : startDate;
       const from = ev.startTime ? timeToMinutes(startTime) : WORK_START;
-      const slot = findSlotAcrossDays(working, startDate, duration, Math.max(from, WORK_START));
+      const notBefore = searchDate === todayStr ? Math.ceil(nowMinutes / 15) * 15 : 0;
+      const slot = findSlotAcrossDays(working, searchDate, duration, Math.max(from, WORK_START, notBefore));
       if (!slot) {
         infos.push(`I couldn't find a free ${duration}-minute slot for "${ev.title}" in the next 7 days.`);
         continue;
@@ -421,7 +457,7 @@ function processNaturalLanguageCalendar(
   currentDateTime: string
 ) {
   const lower = prompt.toLowerCase();
-  const todayDate = currentDateTime.split('T')[0] || '2026-10-13';
+  const todayDate = currentDateTime.split('T')[0];
 
   // Determine target date from prompt
   const dayOfWeekMap: Record<string, number> = {
@@ -438,25 +474,15 @@ function processNaturalLanguageCalendar(
   let targetDayLabel = 'Today';
 
   if (lower.includes('tomorrow')) {
-    const d = new Date(todayDate);
-    d.setDate(d.getDate() + 1);
-    const m = String(d.getMonth() + 1).padStart(2, '0');
-    const day = String(d.getDate()).padStart(2, '0');
-    targetDate = `${d.getFullYear()}-${m}-${day}`;
+    targetDate = addDays(todayDate, 1);
     targetDayLabel = 'Tomorrow';
   } else {
     for (const [dayName, targetDayNum] of Object.entries(dayOfWeekMap)) {
       if (lower.includes(dayName)) {
         targetDayLabel = dayName.charAt(0).toUpperCase() + dayName.slice(1);
-        const refDate = new Date(todayDate);
-        const currentDayNum = refDate.getDay();
-        let diff = targetDayNum - currentDayNum;
+        let diff = targetDayNum - dayOfWeek(todayDate);
         if (diff < 0) diff += 7;
-        const target = new Date(refDate);
-        target.setDate(target.getDate() + diff);
-        const m = String(target.getMonth() + 1).padStart(2, '0');
-        const day = String(target.getDate()).padStart(2, '0');
-        targetDate = `${target.getFullYear()}-${m}-${day}`;
+        targetDate = addDays(todayDate, diff);
         break;
       }
     }
@@ -659,7 +685,7 @@ async function startServer() {
   // Calendar AI Assistant Endpoint
   app.post('/api/calendar/chat', async (req, res) => {
     const { messages = [], events = [], currentDateTime, timeZone = 'UTC' } = req.body as ChatRequestBody;
-    const todayStr = currentDateTime ? currentDateTime.split('T')[0] : '2026-10-13';
+    const { todayStr, nowMinutes, iso: nowIso } = resolveNow(currentDateTime, timeZone);
     const latestUserMessage = messages[messages.length - 1]?.content || '';
 
     const apiKey = process.env.GEMINI_API_KEY;
@@ -677,7 +703,8 @@ async function startServer() {
         });
 
         const systemInstruction = `You are Chronos AI, an elite executive AI calendar assistant.
-Current Date: ${todayStr} (${DAY_NAMES[dayOfWeek(todayStr)]}) (Reference Time: ${currentDateTime || '2026-10-13T11:07:47-07:00'}, Timezone: ${timeZone})
+Current Date: ${todayStr} (${DAY_NAMES[dayOfWeek(todayStr)]}). Current local time: ${minutesToTime(nowMinutes)} (Reference: ${nowIso}, Timezone: ${timeZone}).
+Never schedule anything in the past: events today must start after the current time, and "tomorrow", "next Monday" etc. are relative to the current date above.
 Working hours: 09:00-18:00, Monday-Friday.
 
 Current Calendar Events (each has an "id"):
@@ -807,7 +834,7 @@ Rules:
 
               if (response.text) {
                 const parsed = JSON.parse(response.text);
-                const processed = processModelActions(Array.isArray(parsed.actions) ? parsed.actions : [], events, todayStr);
+                const processed = processModelActions(Array.isArray(parsed.actions) ? parsed.actions : [], events, todayStr, nowMinutes);
                 const reply = [parsed.reply, ...processed.notes].filter(Boolean).join('\n\n');
                 return res.json({
                   reply,

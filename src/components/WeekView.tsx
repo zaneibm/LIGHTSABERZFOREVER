@@ -5,12 +5,14 @@ import {
   formatTime12h,
   getCategoryBadge,
   timeToMinutes,
-  DEFAULT_REFERENCE_DATE,
+  formatDate,
+  minutesSinceMidnight,
 } from '../utils/dateUtils';
 import { Sparkles, MapPin, Users } from 'lucide-react';
 
 interface WeekViewProps {
   currentDate: Date;
+  now: Date;
   events: CalendarEvent[];
   onSelectEvent: (event: CalendarEvent) => void;
   onSelectSlot: (dateStr: string, timeStr: string) => void;
@@ -23,11 +25,12 @@ const HOUR_HEIGHT = 64; // px per hour
 
 export const WeekView: React.FC<WeekViewProps> = ({
   currentDate,
+  now,
   events,
   onSelectEvent,
   onSelectSlot,
 }) => {
-  const weekDays = getWeekDays(currentDate);
+  const weekDays = getWeekDays(currentDate, formatDate(now));
   const hours = Array.from({ length: TOTAL_HOURS }, (_, i) => START_HOUR + i);
 
   // Group events by date
@@ -41,8 +44,8 @@ export const WeekView: React.FC<WeekViewProps> = ({
     return map;
   }, [events]);
 
-  // Current time marker: 11:07 AM
-  const currentMinutesFromStart = (11 * 60 + 7) - (START_HOUR * 60);
+  // Current time marker (real clock)
+  const currentMinutesFromStart = minutesSinceMidnight(now) - START_HOUR * 60;
   const currentTimeTop = (currentMinutesFromStart / 60) * HOUR_HEIGHT;
 
   return (

@@ -2,8 +2,9 @@
  * Date utility functions for Chronos Calendar
  */
 
-// User current context reference: 2026-10-13 (Tuesday)
-export const DEFAULT_REFERENCE_DATE = '2026-10-13';
+// Anchor date (a Tuesday) that the seed events in data/initialEvents.ts are written against.
+// Not used as "today"; see useNow() for the real current date/time.
+export const SEED_REFERENCE_DATE = '2026-10-13';
 
 export function parseDate(dateStr: string): Date {
   // Safe parsing of YYYY-MM-DD
@@ -16,6 +17,39 @@ export function formatDate(date: Date): string {
   const m = String(date.getMonth() + 1).padStart(2, '0');
   const d = String(date.getDate()).padStart(2, '0');
   return `${y}-${m}-${d}`;
+}
+
+export function minutesSinceMidnight(date: Date): number {
+  return date.getHours() * 60 + date.getMinutes();
+}
+
+// Local wall-clock time with UTC offset, e.g. 2026-10-13T11:07:47-07:00
+export function formatLocalIso(date: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const offsetMin = -date.getTimezoneOffset();
+  const sign = offsetMin >= 0 ? '+' : '-';
+  const abs = Math.abs(offsetMin);
+  return (
+    `${formatDate(date)}T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}` +
+    `${sign}${pad(Math.floor(abs / 60))}:${pad(abs % 60)}`
+  );
+}
+
+export function formatClockTime(date: Date): string {
+  return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+// Whole days from a to b (b - a), ignoring time of day and DST shifts
+export function daysBetween(a: string, b: string): number {
+  const [ay, am, ad] = a.split('-').map(Number);
+  const [by, bm, bd] = b.split('-').map(Number);
+  return Math.round((Date.UTC(by, bm - 1, bd) - Date.UTC(ay, am - 1, ad)) / 86400000);
+}
+
+export function addDaysToDateStr(dateStr: string, days: number): string {
+  const d = parseDate(dateStr);
+  d.setDate(d.getDate() + days);
+  return formatDate(d);
 }
 
 export function formatTime12h(time24: string): string {
@@ -87,7 +121,7 @@ export function getMonthDays(year: number, month: number) {
   return days;
 }
 
-export function getWeekDays(centerDate: Date) {
+export function getWeekDays(centerDate: Date, todayStr: string) {
   const d = new Date(centerDate);
   const day = d.getDay();
   const diffToSunday = d.getDate() - day;
@@ -110,7 +144,7 @@ export function getWeekDays(centerDate: Date) {
       dayName: dayNames[i],
       dayNumber: current.getDate(),
       date: current,
-      isToday: dateStr === DEFAULT_REFERENCE_DATE,
+      isToday: dateStr === todayStr,
     });
   }
 

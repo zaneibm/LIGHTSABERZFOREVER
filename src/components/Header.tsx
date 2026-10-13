@@ -73,7 +73,7 @@ export const Header: React.FC<HeaderProps> = ({
             <button
               onClick={onToday}
               className="px-2.5 py-1 text-xs font-semibold rounded-lg text-slate-200 hover:text-white hover:bg-slate-700 transition"
-              title="Jump to today (Oct 13, 2026)"
+              title="Jump to today"
             >
               Today
             </button>

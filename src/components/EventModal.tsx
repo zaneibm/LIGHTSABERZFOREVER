@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { CalendarEvent, EventCategory } from '../types/calendar';
-import { checkOverlap, formatTime12h } from '../utils/dateUtils';
+import { checkOverlap, formatDate, formatTime12h } from '../utils/dateUtils';
 import {
   X,
   Calendar,
@@ -45,9 +45,9 @@ export const EventModal: React.FC<EventModalProps> = ({
     if (event) {
       setTitle(event.title || '');
       setCategory(event.category || 'meeting');
-      setStartDate(event.startDate || '2026-10-13');
+      setStartDate(event.startDate || formatDate(new Date()));
       setStartTime(event.startTime || '09:00');
-      setEndDate(event.endDate || event.startDate || '2026-10-13');
+      setEndDate(event.endDate || event.startDate || formatDate(new Date()));
       setEndTime(event.endTime || '09:30');
       setLocation(event.location || '');
       setAttendeesInput(event.attendees ? event.attendees.join(', ') : '');

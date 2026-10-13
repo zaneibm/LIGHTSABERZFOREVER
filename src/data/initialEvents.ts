@@ -1,7 +1,9 @@
 import { CalendarEvent } from '../types/calendar';
+import { SEED_REFERENCE_DATE, addDaysToDateStr, daysBetween, parseDate } from '../utils/dateUtils';
 
-export const INITIAL_CALENDAR_EVENTS: CalendarEvent[] = [
-  // Tuesday, October 13, 2026 (Today)
+// Seed events are written for the week of SEED_REFERENCE_DATE (Tue Oct 13, 2026).
+const SEED_EVENTS: CalendarEvent[] = [
+  // Tuesday of the seed week
   {
     id: 'evt-tue-1',
     title: 'Morning Engineering Standup',
@@ -139,3 +141,16 @@ export const INITIAL_CALENDAR_EVENTS: CalendarEvent[] = [
     color: '#f59e0b',
   },
 ];
+
+const weekStart = (dateStr: string) => addDaysToDateStr(dateStr, -parseDate(dateStr).getDay());
+
+/** Seed schedule moved (in whole weeks, keeping weekdays) into the week containing `todayStr`. */
+export function createInitialEvents(todayStr: string): CalendarEvent[] {
+  const weeks = Math.floor(daysBetween(weekStart(SEED_REFERENCE_DATE), weekStart(todayStr)) / 7);
+  if (weeks === 0) return SEED_EVENTS;
+  return SEED_EVENTS.map((e) => ({
+    ...e,
+    startDate: addDaysToDateStr(e.startDate, weeks * 7),
+    endDate: addDaysToDateStr(e.endDate, weeks * 7),
+  }));
+}

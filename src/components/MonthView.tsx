@@ -4,12 +4,13 @@ import {
   getMonthDays,
   formatTime12h,
   getCategoryBadge,
-  DEFAULT_REFERENCE_DATE,
+  formatDate,
 } from '../utils/dateUtils';
 import { Sparkles, Plus, Clock } from 'lucide-react';
 
 interface MonthViewProps {
   currentDate: Date;
+  now: Date;
   events: CalendarEvent[];
   onSelectEvent: (event: CalendarEvent) => void;
   onSelectDate: (dateStr: string) => void;
@@ -18,11 +19,13 @@ interface MonthViewProps {
 
 export const MonthView: React.FC<MonthViewProps> = ({
   currentDate,
+  now,
   events,
   onSelectEvent,
   onSelectDate,
   onQuickAdd,
 }) => {
+  const todayStr = formatDate(now);
   const days = getMonthDays(currentDate.getFullYear(), currentDate.getMonth());
   const weekDayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
@@ -58,7 +61,7 @@ export const MonthView: React.FC<MonthViewProps> = ({
       {/* Days grid */}
       <div className="grid grid-cols-7 flex-1 auto-rows-fr bg-slate-900 divide-x divide-y divide-slate-800/80 overflow-y-auto">
         {days.map((dayItem) => {
-          const isToday = dayItem.dateStr === DEFAULT_REFERENCE_DATE;
+          const isToday = dayItem.dateStr === todayStr;
           const dayEvents = eventsByDate.get(dayItem.dateStr) || [];
 
           return (

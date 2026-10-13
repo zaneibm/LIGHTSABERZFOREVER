@@ -5,13 +5,15 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { CalendarEvent, CalendarViewMode, ChatMessage } from './types/calendar';
-import { INITIAL_CALENDAR_EVENTS } from './data/initialEvents';
+import { createInitialEvents } from './data/initialEvents';
 import {
   parseDate,
   formatDate,
-  DEFAULT_REFERENCE_DATE,
   formatTime12h,
+  formatLocalIso,
+  formatClockTime,
 } from './utils/dateUtils';
+import { useNow } from './utils/useNow';
 import { Header } from './components/Header';
 import { QuickStatsBar } from './components/QuickStatsBar';
 import { MonthView } from './components/MonthView';
@@ -25,6 +27,10 @@ import { NotificationToast, ToastNotification } from './components/NotificationT
 const STORAGE_KEY = 'chronos_calendar_events_v2';
 
 export default function App() {
+  // Real current date/time (re-renders each minute)
+  const now = useNow();
+  const todayStr = formatDate(now);
+
   // Calendar state
   const [events, setEvents] = useState<CalendarEvent[]>(() => {
     try {
@@ -35,11 +41,11 @@ export default function App() {
     } catch (e) {
       console.error('Failed to load events from storage', e);
     }
-    return INITIAL_CALENDAR_EVENTS;
+    return createInitialEvents(formatDate(new Date()));
   });
 
-  // Current view date (October 13, 2026 Tuesday default)
-  const [currentDate, setCurrentDate] = useState<Date>(() => parseDate(DEFAULT_REFERENCE_DATE));
+  // Current view date (starts on today)
+  const [currentDate, setCurrentDate] = useState<Date>(() => new Date());
   const [viewMode, setViewMode] = useState<CalendarViewMode>('week');
   const [isAiOpen, setIsAiOpen] = useState<boolean>(true);
   const [isAiLoading, setIsAiLoading] = useState<boolean>(false);
@@ -57,7 +63,7 @@ export default function App() {
       id: 'welcome-1',
       role: 'assistant',
       content: `Hello! I'm **Chronos AI**, your calendar assistant.\n\nI can view your meetings, book new calls, resolve conflicts, and organize your day with simple commands. Try asking me:\n\n• **"What meetings do I have on tuesday?"**\n• **"Schedule a call with Rob at 4:30"**\n• **"Book 2 hours of focus time tomorrow"**`,
-      timestamp: '11:07 AM',
+      timestamp: formatClockTime(new Date()),
     },
   ]);
 
@@ -112,7 +118,7 @@ export default function App() {
   };
 
   const handleToday = () => {
-    setCurrentDate(parseDate(DEFAULT_REFERENCE_DATE));
+    setCurrentDate(new Date());
   };
 
   // Manual event creation / editing
@@ -162,8 +168,8 @@ export default function App() {
   };
 
   const handleResetData = () => {
-    setEvents(INITIAL_CALENDAR_EVENTS);
-    setCurrentDate(parseDate(DEFAULT_REFERENCE_DATE));
+    setEvents(createInitialEvents(formatDate(new Date())));
+    setCurrentDate(new Date());
     addToast('info', 'Schedule Reset', 'Restored initial prototype calendar schedule.');
   };
 
@@ -175,7 +181,7 @@ export default function App() {
       id: `usr-${Date.now()}`,
       role: 'user',
       content: userPrompt,
-      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      timestamp: formatClockTime(new Date()),
     };
 
     setChatMessages((prev) => [...prev, userMessage]);
@@ -196,7 +202,7 @@ export default function App() {
             content: m.content,
           })),
           events,
-          currentDateTime: '2026-10-13T11:07:47-07:00',
+          currentDateTime: formatLocalIso(new Date()),
           timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/Los_Angeles',
         }),
       });
@@ -215,9 +221,9 @@ export default function App() {
             const newEvt: CalendarEvent = {
               id: `evt-ai-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
               title: act.event.title || 'Scheduled Event',
-              startDate: act.event.startDate || DEFAULT_REFERENCE_DATE,
+              startDate: act.event.startDate || todayStr,
               startTime: act.event.startTime || '16:30',
-              endDate: act.event.endDate || act.event.startDate || DEFAULT_REFERENCE_DATE,
+              endDate: act.event.endDate || act.event.startDate || todayStr,
               endTime: act.event.endTime || '17:00',
               category: act.event.category || 'call',
               description: act.event.description || 'Scheduled via Chronos AI',
@@ -269,7 +275,7 @@ export default function App() {
         id: `ai-${Date.now()}`,
         role: 'assistant',
         content: data.reply || "I've updated your calendar.",
-        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        timestamp: formatClockTime(new Date()),
         actionsApplied: actionsApplied.length > 0 ? actionsApplied : undefined,
         conflictWarning: data.conflictWarning || undefined,
       };
@@ -283,7 +289,7 @@ export default function App() {
           id: `ai-err-${Date.now()}`,
           role: 'assistant',
           content: "Sorry, I had trouble processing that request right now. Please try again or create the event using the **+ Event** button.",
-          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          timestamp: formatClockTime(new Date()),
         },
       ]);
     } finally {
@@ -311,7 +317,7 @@ export default function App() {
       {/* Quick Stats & Spotlight */}
       <QuickStatsBar
         events={events}
-        currentDate={currentDate}
+        now={now}
         onOpenAiPrompt={(prompt) => {
           setIsAiOpen(true);
           handleSendMessage(prompt);
@@ -325,6 +331,7 @@ export default function App() {
           {viewMode === 'month' && (
             <MonthView
               currentDate={currentDate}
+              now={now}
               events={events}
               onSelectEvent={handleOpenEditEvent}
               onSelectDate={(dateStr) => {
@@ -338,6 +345,7 @@ export default function App() {
           {viewMode === 'week' && (
             <WeekView
               currentDate={currentDate}
+              now={now}
               events={events}
               onSelectEvent={handleOpenEditEvent}
               onSelectSlot={(dateStr, timeStr) => handleOpenNewEvent(dateStr, timeStr)}
@@ -355,6 +363,7 @@ export default function App() {
 
           {viewMode === 'agenda' && (
             <AgendaView
+              now={now}
               events={events}
               onSelectEvent={handleOpenEditEvent}
               onNewEvent={() => handleOpenNewEvent()}

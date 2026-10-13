@@ -5,21 +5,23 @@ import {
   formatTime12h,
   getCategoryBadge,
   parseDate,
-  DEFAULT_REFERENCE_DATE,
 } from '../utils/dateUtils';
 import { Search, Filter, Clock, MapPin, Users, Sparkles } from 'lucide-react';
 
 interface AgendaViewProps {
+  now: Date;
   events: CalendarEvent[];
   onSelectEvent: (event: CalendarEvent) => void;
   onNewEvent: () => void;
 }
 
 export const AgendaView: React.FC<AgendaViewProps> = ({
+  now,
   events,
   onSelectEvent,
   onNewEvent,
 }) => {
+  const todayStr = formatDate(now);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
 
@@ -112,7 +114,7 @@ export const AgendaView: React.FC<AgendaViewProps> = ({
         <div className="space-y-6">
           {grouped.map(({ dateStr, events }) => {
             const dateObj = parseDate(dateStr);
-            const isToday = dateStr === DEFAULT_REFERENCE_DATE;
+            const isToday = dateStr === todayStr;
             const heading = dateObj.toLocaleDateString('en-US', {
               weekday: 'short',
               month: 'short',
