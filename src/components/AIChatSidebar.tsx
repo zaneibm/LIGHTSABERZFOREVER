@@ -14,10 +14,13 @@ import {
   Trash2,
   Undo2,
   Loader2,
-  CalendarDays
+  CalendarDays,
+  MapPin,
+  CloudSun,
 } from 'lucide-react';
 import { CalendarEvent, ChatMessage } from '../types/calendar';
 import { formatTime12h, parseDate } from '../utils/dateUtils';
+import type { LocationState } from '../utils/useLocation';
 
 interface AIChatSidebarProps {
   isOpen: boolean;
@@ -29,6 +32,8 @@ interface AIChatSidebarProps {
   onUndoAction?: (action: any) => void;
   onClearHistory: () => void;
   allEvents: CalendarEvent[];
+  locationState: LocationState;
+  onRequestLocation: () => void;
 }
 
 export const AIChatSidebar: React.FC<AIChatSidebarProps> = ({
@@ -41,6 +46,8 @@ export const AIChatSidebar: React.FC<AIChatSidebarProps> = ({
   onUndoAction,
   onClearHistory,
   allEvents,
+  locationState,
+  onRequestLocation,
 }) => {
   const [input, setInput] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -107,6 +114,30 @@ export const AIChatSidebar: React.FC<AIChatSidebarProps> = ({
             <X className="w-4 h-4" />
           </button>
         </div>
+      </div>
+
+      {/* Location + Weather status pill */}
+      <div className="px-4 pt-2 pb-0">
+        {locationState.status === 'idle' || locationState.status === 'pending' ? (
+          <button
+            onClick={onRequestLocation}
+            disabled={locationState.status === 'pending'}
+            className="w-full flex items-center gap-1.5 text-[11px] text-slate-400 hover:text-indigo-300 transition py-1"
+          >
+            <MapPin className="w-3 h-3 flex-shrink-0" />
+            {locationState.status === 'pending' ? 'Getting location…' : 'Enable location for weather forecasts'}
+          </button>
+        ) : locationState.status === 'denied' ? (
+          <div className="flex items-center gap-1.5 text-[11px] text-slate-500 py-1">
+            <MapPin className="w-3 h-3 flex-shrink-0" />
+            Location unavailable — include a city in your question (e.g. "…in Seattle")
+          </div>
+        ) : (
+          <div className="flex items-center gap-1.5 text-[11px] text-emerald-400 py-1">
+            <CloudSun className="w-3 h-3 flex-shrink-0" />
+            Location active — ask about the weather anytime
+          </div>
+        )}
       </div>
 
       {/* Suggested Quick Starters */}
@@ -268,7 +299,7 @@ export const AIChatSidebar: React.FC<AIChatSidebarProps> = ({
             type="text"
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder="Ask about meetings or schedule an event..."
+            placeholder="Ask about weather, meetings, or schedule an event..."
             disabled={isLoading}
             className="w-full pl-3.5 pr-11 py-2.5 rounded-xl bg-slate-800 border border-slate-700 text-xs sm:text-sm text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 disabled:opacity-50"
           />
@@ -281,7 +312,7 @@ export const AIChatSidebar: React.FC<AIChatSidebarProps> = ({
           </button>
         </div>
         <p className="text-[10px] text-slate-400 text-center mt-1.5">
-          Try: "What meetings do I have on tuesday?" or "Schedule a call with Rob at 4:30"
+          Try: "Will it rain on Tuesday?" or "Is Saturday good for a picnic?"
         </p>
       </form>
     </aside>

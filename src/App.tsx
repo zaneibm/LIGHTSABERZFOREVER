@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { CalendarEvent, CalendarViewMode, ChatMessage } from './types/calendar';
 import { createInitialEvents } from './data/initialEvents';
 import {
@@ -14,6 +14,7 @@ import {
   formatClockTime,
 } from './utils/dateUtils';
 import { useNow } from './utils/useNow';
+import { useLocation } from './utils/useLocation';
 import { Header } from './components/Header';
 import { QuickStatsBar } from './components/QuickStatsBar';
 import { MonthView } from './components/MonthView';
@@ -29,6 +30,10 @@ const STORAGE_KEY = 'chronos_calendar_events_v2';
 export default function App() {
   // Real current date/time (re-renders each minute)
   const now = useNow();
+  // GPS location for weather queries (requested silently on mount; user can also click to enable)
+  const { location: gpsLocation, request: requestLocation } = useLocation();
+  const gpsRef = useRef(gpsLocation);
+  useEffect(() => { gpsRef.current = gpsLocation; }, [gpsLocation]);
   const todayStr = formatDate(now);
 
   // Calendar state
@@ -204,6 +209,9 @@ export default function App() {
           events,
           currentDateTime: formatLocalIso(new Date()),
           timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/Los_Angeles',
+          ...(gpsRef.current.status === 'granted'
+            ? { latitude: gpsRef.current.latitude, longitude: gpsRef.current.longitude }
+            : {}),
         }),
       });
 
@@ -390,6 +398,8 @@ export default function App() {
             ])
           }
           allEvents={events}
+          locationState={gpsLocation}
+          onRequestLocation={requestLocation}
         />
       </div>
 

@@ -37,6 +37,9 @@ interface ChatRequestBody {
   events: CalendarEventPayload[];
   currentDateTime: string;
   timeZone?: string;
+  // Optional: browser Geolocation coordinates supplied by the client
+  latitude?: number;
+  longitude?: number;
 }
 
 function timeToMinutes(time24: string): number {
@@ -670,6 +673,217 @@ function processNaturalLanguageCalendar(
   };
 }
 
+// ---------------------------------------------------------------------------
+// Weather  (Open-Meteo – free, no API key required, HTTPS only)
+// ---------------------------------------------------------------------------
+const WEATHER_TIMEOUT_MS = 7000;
+const WEATHER_CACHE_MS = 10 * 60 * 1000; // 10 minutes
+const FORECAST_DAYS = 16;
+
+// Matches messages that are clearly weather-related (so we don't fetch for every chat).
+const WEATHER_KEYWORDS =
+  /\b(weather|forecast|rain|raining|rainy|snow|snowy|storm|stormy|sunny|cloudy|windy|wind|temperature|temp|umbrella|jacket|coat|picnic|outdoor|outdoors|hike|hiking|bbq|barbecue|beach|humid|drizzle|thunder|lightning|hot|cold|warm|cool|freezing)\b/i;
+
+// WMO weather-code descriptions
+const WMO_CODES: Record<number, string> = {
+  0: 'Clear sky', 1: 'Mainly clear', 2: 'Partly cloudy', 3: 'Overcast',
+  45: 'Fog', 48: 'Depositing rime fog',
+  51: 'Light drizzle', 53: 'Drizzle', 55: 'Heavy drizzle',
+  56: 'Light freezing drizzle', 57: 'Heavy freezing drizzle',
+  61: 'Light rain', 63: 'Rain', 65: 'Heavy rain',
+  66: 'Light freezing rain', 67: 'Heavy freezing rain',
+  71: 'Light snow', 73: 'Snow', 75: 'Heavy snow', 77: 'Snow grains',
+  80: 'Light showers', 81: 'Rain showers', 82: 'Violent rain showers',
+  85: 'Snow showers', 86: 'Heavy snow showers',
+  95: 'Thunderstorm', 96: 'Thunderstorm + hail', 99: 'Thunderstorm + heavy hail',
+};
+
+interface GeoPlace { name: string; latitude: number; longitude: number; timezone: string }
+interface DayForecast {
+  date: string; weekday: string; conditions: string;
+  tempMaxF: number; tempMinF: number;
+  tempMaxC: number; tempMinC: number;
+  rainChancePct: number; precipInch: number; precipMm: number;
+  windMph: number; windKph: number;
+  dryWindows: string[]; // 08:00–20:00 gaps of ≥2 h with ≤30 % rain chance
+}
+interface WeatherForecast { place: string; days: DayForecast[] }
+
+// Simple in-process caches — safe for a single-server prototype
+const geoCache = new Map<string, GeoPlace | null>();
+const forecastCache = new Map<string, { at: number; data: WeatherForecast }>();
+
+function cityFromMessage(msg: string): string | null {
+  // "...in Seattle", "...for New York", "...near Austin" – first capitalised word(s)
+  const SKIP = new Set([
+    ...DAY_NAMES, 'Today', 'Tomorrow', 'Tonight',
+    'January','February','March','April','May','June',
+    'July','August','September','October','November','December',
+    'The', 'My', 'A', 'An', 'Is', 'Will', 'Do',
+  ]);
+  const m = msg.match(/\b(?:in|for|near|around)\s+([A-Z][\p{L}.'\-]*(?:\s+[A-Z][\p{L}.'\-]*){0,2})/u);
+  if (!m) return null;
+  const words = m[1].split(/\s+/).filter((w) => !SKIP.has(w));
+  const city = words.join(' ').trim();
+  return city.length >= 2 && city.length <= 60 ? city : null;
+}
+
+function cityFromTimezone(tz: string): string | null {
+  const parts = (tz || '').split('/');
+  if (parts.length < 2) return null;
+  return parts[parts.length - 1].replace(/_/g, ' ');
+}
+
+async function geocodeByName(name: string): Promise<GeoPlace | null> {
+  const key = name.toLowerCase().trim();
+  if (geoCache.has(key)) return geoCache.get(key)!;
+  try {
+    const url = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(name)}&count=1&language=en&format=json`;
+    const r = await fetch(url, { signal: AbortSignal.timeout(WEATHER_TIMEOUT_MS) });
+    if (!r.ok) { geoCache.set(key, null); return null; }
+    const p = ((await r.json()) as any)?.results?.[0];
+    const place: GeoPlace | null =
+      p && typeof p.latitude === 'number' && typeof p.longitude === 'number'
+        ? { name: [p.name, p.admin1].filter(Boolean).join(', '), latitude: p.latitude, longitude: p.longitude, timezone: p.timezone || 'UTC' }
+        : null;
+    geoCache.set(key, place);
+    return place;
+  } catch { geoCache.set(key, null); return null; }
+}
+
+async function geocodeByCoords(lat: number, lon: number, tz: string): Promise<GeoPlace> {
+  // Reverse-geocode via Open-Meteo's geocoding API isn't available, so we use the
+  // timezone city name as a friendly label and trust the supplied coordinates directly.
+  const label = cityFromTimezone(tz) || `${lat.toFixed(2)},${lon.toFixed(2)}`;
+  return { name: label, latitude: lat, longitude: lon, timezone: tz };
+}
+
+function buildDryWindows(hourly: any, date: string): string[] {
+  const windows: string[] = [];
+  let start = -1;
+  for (let h = 8; h <= 20; h++) {
+    const idx = hourly.time.findIndex((t: string) => t === `${date}T${String(h).padStart(2, '0')}:00`);
+    const prob: number | null = idx >= 0 ? hourly.precipitation_probability[idx] : null;
+    const dry = h < 20 && typeof prob === 'number' && prob <= 30;
+    if (dry && start < 0) start = h;
+    if (!dry && start >= 0) {
+      if (h - start >= 2) windows.push(`${String(start).padStart(2, '0')}:00–${String(h).padStart(2, '0')}:00`);
+      start = -1;
+    }
+  }
+  return windows;
+}
+
+async function fetchForecast(place: GeoPlace): Promise<WeatherForecast | null> {
+  const cacheKey = `${place.latitude.toFixed(2)},${place.longitude.toFixed(2)}`;
+  const hit = forecastCache.get(cacheKey);
+  if (hit && Date.now() - hit.at < WEATHER_CACHE_MS) return hit.data;
+
+  try {
+    const q = new URLSearchParams({
+      latitude: String(place.latitude),
+      longitude: String(place.longitude),
+      // Request both unit systems so the model/user can choose
+      daily: 'weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,precipitation_sum,wind_speed_10m_max',
+      daily_variable_additional: 'temperature_2m_max,temperature_2m_min,precipitation_sum,wind_speed_10m_max',
+      hourly: 'precipitation_probability',
+      timezone: 'auto',
+      forecast_days: String(FORECAST_DAYS),
+      // Fetch both unit systems in parallel would require two calls; instead we fetch metric
+      // and convert in JS — simpler and avoids an extra HTTP round-trip.
+    });
+    const url = `https://api.open-meteo.com/v1/forecast?${q}`;
+    const r = await fetch(url, { signal: AbortSignal.timeout(WEATHER_TIMEOUT_MS) });
+    if (!r.ok) return null;
+    const d: any = await r.json();
+    if (!Array.isArray(d?.daily?.time)) return null;
+
+    const days: DayForecast[] = d.daily.time.map((date: string, i: number) => {
+      const tMaxC = Math.round(d.daily.temperature_2m_max[i] ?? 0);
+      const tMinC = Math.round(d.daily.temperature_2m_min[i] ?? 0);
+      const precipMm = Math.round((d.daily.precipitation_sum[i] ?? 0) * 10) / 10;
+      const windKph = Math.round(d.daily.wind_speed_10m_max[i] ?? 0);
+      return {
+        date,
+        weekday: DAY_NAMES[dayOfWeek(date)],
+        conditions: WMO_CODES[d.daily.weather_code[i]] ?? 'Unknown',
+        tempMaxC: tMaxC, tempMinC: tMinC,
+        tempMaxF: Math.round(tMaxC * 9 / 5 + 32), tempMinF: Math.round(tMinC * 9 / 5 + 32),
+        rainChancePct: d.daily.precipitation_probability_max[i] ?? 0,
+        precipMm,
+        precipInch: Math.round(precipMm / 25.4 * 100) / 100,
+        windKph,
+        windMph: Math.round(windKph / 1.609),
+        dryWindows: buildDryWindows(d.hourly, date),
+      };
+    });
+
+    const data: WeatherForecast = { place: place.name, days };
+    forecastCache.set(cacheKey, { at: Date.now(), data });
+    return data;
+  } catch { return null; }
+}
+
+// Resolve the best available forecast for a given request.
+// Priority: browser coords > city in message > WEATHER_LOCATION env var > timezone city.
+async function resolveForecast(
+  msg: string,
+  timeZone: string,
+  lat?: number,
+  lon?: number,
+): Promise<WeatherForecast | null> {
+  const places: Array<() => Promise<GeoPlace | null>> = [];
+
+  if (typeof lat === 'number' && typeof lon === 'number' && isFinite(lat) && isFinite(lon)) {
+    places.push(async () => geocodeByCoords(lat, lon, timeZone));
+  }
+  const cityInMsg = cityFromMessage(msg);
+  if (cityInMsg) places.push(() => geocodeByName(cityInMsg));
+  const envCity = process.env.WEATHER_LOCATION?.trim();
+  if (envCity) places.push(() => geocodeByName(envCity));
+  const tzCity = cityFromTimezone(timeZone);
+  if (tzCity) places.push(() => geocodeByName(tzCity));
+
+  for (const getPlace of places) {
+    const place = await getPlace();
+    if (!place) continue;
+    const forecast = await fetchForecast(place);
+    if (forecast) return forecast;
+  }
+  return null;
+}
+
+// Plain-English fallback weather answer (used when Gemini is unavailable).
+function weatherReplyOffline(w: WeatherForecast, targetDate: string, dayLabel: string, imperial: boolean): string {
+  const day = w.days.find((x) => x.date === targetDate);
+  if (!day) {
+    const first = w.days[0]?.date ?? '?';
+    const last = w.days[w.days.length - 1]?.date ?? '?';
+    return `I only have forecasts from **${first}** to **${last}** — **${targetDate}** is outside that range. Try asking about a date within the next ${FORECAST_DAYS} days.`;
+  }
+  const tempHigh = imperial ? `${day.tempMaxF}°F` : `${day.tempMaxC}°C`;
+  const tempLow  = imperial ? `${day.tempMinF}°F` : `${day.tempMinC}°C`;
+  const wind     = imperial ? `${day.windMph} mph` : `${day.windKph} km/h`;
+  const precip   = imperial ? `${day.precipInch} in` : `${day.precipMm} mm`;
+  const rain = day.rainChancePct;
+  const verdict =
+    rain <= 20 && day.windMph <= 20
+      ? '✅ Looks great for outdoor plans!'
+      : rain > 40
+        ? `🌧️ Rain is likely (${rain}%) — bring an umbrella or have a backup plan.`
+        : rain > 20
+          ? `⛅ There's a ${rain}% chance of rain — worth keeping an eye on.`
+          : `💨 It will be windy (up to ${wind}) — plan accordingly.`;
+  const dryNote = day.dryWindows.length
+    ? `\n\n🌤️ **Dry windows today (≤30% rain):** ${day.dryWindows.join(', ')}`
+    : '';
+  return (
+    `**${day.weekday}, ${targetDate}** in **${w.place}**\n` +
+    `${day.conditions} · ${tempLow}–${tempHigh} · ${rain}% rain · ${precip} · Wind ${wind}\n\n` +
+    `${verdict}${dryNote}`
+  );
+}
+
 async function startServer() {
   const app = express();
   const PORT = 3000;
@@ -682,11 +896,30 @@ async function startServer() {
     res.json({ status: 'ok', hasGeminiKey: Boolean(process.env.GEMINI_API_KEY) });
   });
 
+  // Weather proxy endpoint — called by the browser after it receives GPS coords.
+  // The browser can't call Open-Meteo directly with a city name, so it sends coords here.
+  app.post('/api/weather', async (req, res) => {
+    const { latitude, longitude, timeZone = 'UTC' } = req.body as { latitude?: number; longitude?: number; timeZone?: string };
+    if (typeof latitude !== 'number' || typeof longitude !== 'number') {
+      return res.status(400).json({ error: 'latitude and longitude are required' });
+    }
+    const place = await geocodeByCoords(latitude, longitude, timeZone);
+    const forecast = await fetchForecast(place);
+    if (!forecast) return res.status(503).json({ error: 'Forecast unavailable' });
+    return res.json(forecast);
+  });
+
   // Calendar AI Assistant Endpoint
   app.post('/api/calendar/chat', async (req, res) => {
-    const { messages = [], events = [], currentDateTime, timeZone = 'UTC' } = req.body as ChatRequestBody;
+    const { messages = [], events = [], currentDateTime, timeZone = 'UTC', latitude, longitude } = req.body as ChatRequestBody;
     const { todayStr, nowMinutes, iso: nowIso } = resolveNow(currentDateTime, timeZone);
     const latestUserMessage = messages[messages.length - 1]?.content || '';
+    const imperial = timeZone.startsWith('America/') || timeZone.startsWith('Pacific/Honolulu');
+
+    // Fetch weather only for weather-related messages (keeps non-weather chat fast)
+    const weather = WEATHER_KEYWORDS.test(latestUserMessage)
+      ? await resolveForecast(latestUserMessage, timeZone, latitude, longitude)
+      : null;
 
     const apiKey = process.env.GEMINI_API_KEY;
 
@@ -712,14 +945,18 @@ ${JSON.stringify(events, null, 2)}
 
 Pre-computed load for the next 7 days (use this for summaries and insights; do not recompute):
 ${JSON.stringify(buildScheduleInsights(events, todayStr), null, 2)}
-
+${weather ? `
+Weather forecast for ${weather.place} (both °C/°F, mm/in, km/h/mph provided — use ${imperial ? '°F, in, mph' : '°C, mm, km/h'} in your reply):
+${JSON.stringify(weather.days, null, 2)}
+` : ''}
 Your Capabilities:
 1. Answer queries about the user's schedule (e.g. "what meetings do I have on tuesday?").
 2. Schedule events (action type "schedule"), including recurring ones and "find me a slot" requests.
 3. Update or reschedule existing events (action type "update").
 4. Cancel/delete events (action type "delete").
 5. Bulk operations: emit one action per affected event (e.g. "cancel everything on Friday" -> one "delete" per event that day; "move everything on Monday to Tuesday" -> one "update" per event).
-6. Daily/weekly summaries and insights: workload, back-to-back meetings, focus time, and the best free blocks, based on the pre-computed load above.
+6. Daily/weekly summaries and insights: workload, back-to-back meetings, focus time, and the best free blocks.
+7. Weather questions (e.g. "will it rain on Tuesday?", "is it good weather for a picnic on Saturday?").
 
 Rules:
 - If scheduling "call with Rob at 4:30", set title: "Call with Rob", startDate: "${todayStr}", startTime: "16:30", endDate: "${todayStr}", endTime: "17:00", category: "call", attendees: ["Rob"].
@@ -729,6 +966,7 @@ Rules:
 - If the user gives no time or asks you to find/pick the best time, set "autoFindSlot": true and "durationMinutes"; set startDate to the earliest acceptable day and startTime to the earliest acceptable time (or "09:00"). The server picks the first free slot in working hours.
 - For recurring requests ("every Monday at 9"), emit ONE schedule action for the first occurrence on or after today and set "recurrence" (frequency daily|weekly|monthly, interval, daysOfWeek with 0=Sunday..6=Saturday, and count or until). Do not emit one action per occurrence.
 - The server detects conflicts and computes alternatives. Do not claim a slot is free if it overlaps an existing event; mention conflicts in your reply and offer alternatives.
+- Weather: answer ONLY from the forecast data provided above. Never invent weather data. If no forecast is present, say so and suggest the user enable location access. State the place name used. For outdoor plans, recommend a specific time slot by cross-referencing dryWindows with the user's free calendar time. Only emit a schedule action if the user explicitly asks to book the time.
 - Only describe changes that you actually emit as actions. For pure questions or summaries, return an empty actions array.`;
 
         // Filter and sanitize messages so history starts with 'user'
@@ -855,6 +1093,29 @@ Rules:
     }
 
     // Seamless fallback to natural language calendar engine
+    // If the message is weather-related and we have a forecast, answer it directly.
+    if (weather && WEATHER_KEYWORDS.test(latestUserMessage)) {
+      // Determine the target date from the message (reuse the same logic the calendar engine uses)
+      const lower = latestUserMessage.toLowerCase();
+      let targetDate = todayStr;
+      let targetLabel = 'Today';
+      if (lower.includes('tomorrow')) {
+        targetDate = addDays(todayStr, 1);
+        targetLabel = 'Tomorrow';
+      } else {
+        const dayMap: Record<string, number> = { sunday:0,monday:1,tuesday:2,wednesday:3,thursday:4,friday:5,saturday:6 };
+        for (const [name, num] of Object.entries(dayMap)) {
+          if (lower.includes(name)) {
+            let diff = num - dayOfWeek(todayStr);
+            if (diff <= 0) diff += 7;
+            targetDate = addDays(todayStr, diff);
+            targetLabel = name[0].toUpperCase() + name.slice(1);
+            break;
+          }
+        }
+      }
+      return res.json({ reply: weatherReplyOffline(weather, targetDate, targetLabel, imperial), actions: [] });
+    }
     const fallbackResult = processNaturalLanguageCalendar(latestUserMessage, events, todayStr);
     return res.json(fallbackResult);
   });
