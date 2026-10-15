@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { CalendarEvent, CalendarViewMode, ChatMessage } from './types/calendar';
 import { createInitialEvents } from './data/initialEvents';
 import {
@@ -25,7 +25,7 @@ import { AIChatSidebar } from './components/AIChatSidebar';
 import { EventModal } from './components/EventModal';
 import { NotificationToast, ToastNotification } from './components/NotificationToast';
 
-const STORAGE_KEY = 'chronos_calendar_events_v2';
+const STORAGE_KEY = 'daylie_calendar_events_v2';
 
 export default function App() {
   // Real current date/time (re-renders each minute)
@@ -67,7 +67,7 @@ export default function App() {
     {
       id: 'welcome-1',
       role: 'assistant',
-      content: `Hello! I'm **Chronos AI**, your calendar assistant.\n\nI can view your meetings, book new calls, resolve conflicts, and organize your day with simple commands. Try asking me:\n\n• **"What meetings do I have on tuesday?"**\n• **"Schedule a call with Rob at 4:30"**\n• **"Book 2 hours of focus time tomorrow"**`,
+      content: `Hello! I'm **Daylie AI**, your calendar assistant.\n\nI can view your meetings, book new calls, resolve conflicts, and organize your day with simple commands. Try asking me:\n\n• **"What meetings do I have on tuesday?"**\n• **"Schedule a call with Rob at 4:30"**\n• **"Book 2 hours of focus time tomorrow"**`,
       timestamp: formatClockTime(new Date()),
     },
   ]);
@@ -234,7 +234,7 @@ export default function App() {
               endDate: act.event.endDate || act.event.startDate || todayStr,
               endTime: act.event.endTime || '17:00',
               category: act.event.category || 'call',
-              description: act.event.description || 'Scheduled via Chronos AI',
+              description: act.event.description || 'Scheduled via Daylie AI',
               attendees: act.event.attendees || [],
               location: act.event.location || '',
               createdByAi: true,
@@ -255,17 +255,20 @@ export default function App() {
               setCurrentDate(parseDate(newEvt.startDate));
             }
           } else if (act.type === 'update' && act.event) {
-            // Server resolves updates to a concrete event id (important for recurring events sharing a title)
-            const target = events.find((e) => e.id === act.event.id);
-            if (!target) return;
-            const updated: CalendarEvent = { ...target, ...act.event };
-            setEvents((prev) => prev.map((e) => (e.id === updated.id ? updated : e)));
+            // Lookup inside setEvents to avoid stale-closure if multiple updates arrive together
+            setEvents((prev) => {
+              const target = prev.find((e) => e.id === act.event.id);
+              if (!target) return prev;
+              const updated: CalendarEvent = { ...target, ...act.event };
+              return prev.map((e) => (e.id === updated.id ? updated : e));
+            });
+            const updatedTitle = act.event.title || act.event.id || 'Event';
             actionsApplied.push({
               type: 'update',
-              eventTitle: updated.title,
-              details: `${updated.startDate} • ${formatTime12h(updated.startTime)} – ${formatTime12h(updated.endTime)}`,
+              eventTitle: updatedTitle,
+              details: `${act.event.startDate} • ${formatTime12h(act.event.startTime)} – ${formatTime12h(act.event.endTime)}`,
             });
-            addToast('info', 'Event Updated', `Updated schedule for ${updated.title}.`);
+            addToast('info', 'Event Updated', `Updated schedule for ${updatedTitle}.`);
           } else if (act.type === 'delete' && act.event) {
             setEvents((prev) => prev.filter((e) => e.id !== act.event.id));
             actionsApplied.push({
@@ -306,7 +309,7 @@ export default function App() {
   };
 
   return (
-    <div className="flex flex-col h-screen w-screen overflow-hidden bg-slate-950 font-sans text-slate-100">
+    <div className="flex flex-col h-screen w-screen overflow-hidden bg-white font-sans text-gray-900">
       {/* Top Header */}
       <Header
         currentDate={currentDate}
@@ -335,7 +338,7 @@ export default function App() {
       {/* Main Content Area: Split View with Calendar on Left, AI Chat on Right */}
       <div className="flex-1 flex overflow-hidden relative">
         {/* Calendar View Area */}
-        <main className="flex-1 flex flex-col h-full overflow-hidden bg-slate-900">
+        <main className="flex-1 flex flex-col h-full overflow-hidden bg-white">
           {viewMode === 'month' && (
             <MonthView
               currentDate={currentDate}

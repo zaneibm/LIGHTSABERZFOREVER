@@ -22,36 +22,36 @@ export const NotificationToast: React.FC<NotificationToastProps> = ({
       {toasts.map((toast) => (
         <div
           key={toast.id}
-          className={`pointer-events-auto p-3.5 rounded-2xl shadow-xl border backdrop-blur-md flex items-start gap-3 animate-in slide-in-from-bottom-5 duration-200 ${
+          className={`pointer-events-auto p-3.5 rounded-2xl shadow-lg border flex items-start gap-3 animate-in slide-in-from-bottom-5 duration-200 bg-white ${
             toast.type === 'success'
-              ? 'bg-slate-900/95 border-emerald-500/40 text-slate-100 ring-1 ring-emerald-500/20'
+              ? 'border-emerald-200'
               : toast.type === 'warning'
-              ? 'bg-slate-900/95 border-amber-500/40 text-slate-100 ring-1 ring-amber-500/20'
-              : 'bg-slate-900/95 border-indigo-500/40 text-slate-100 ring-1 ring-indigo-500/20'
+              ? 'border-amber-200'
+              : 'border-indigo-200'
           }`}
         >
           {toast.type === 'success' ? (
-            <div className="w-7 h-7 rounded-lg bg-emerald-500/20 text-emerald-400 flex items-center justify-center flex-shrink-0">
+            <div className="w-7 h-7 rounded-lg bg-emerald-50 text-emerald-500 flex items-center justify-center flex-shrink-0">
               <CheckCircle2 className="w-4 h-4" />
             </div>
           ) : toast.type === 'warning' ? (
-            <div className="w-7 h-7 rounded-lg bg-amber-500/20 text-amber-400 flex items-center justify-center flex-shrink-0">
+            <div className="w-7 h-7 rounded-lg bg-amber-50 text-amber-500 flex items-center justify-center flex-shrink-0">
               <AlertTriangle className="w-4 h-4" />
             </div>
           ) : (
-            <div className="w-7 h-7 rounded-lg bg-indigo-500/20 text-indigo-400 flex items-center justify-center flex-shrink-0">
+            <div className="w-7 h-7 rounded-lg bg-indigo-50 text-indigo-500 flex items-center justify-center flex-shrink-0">
               <Sparkles className="w-4 h-4" />
             </div>
           )}
 
           <div className="flex-1 min-w-0">
-            <h4 className="text-xs font-bold text-white truncate">{toast.title}</h4>
-            <p className="text-[11px] text-slate-300 mt-0.5 leading-snug">{toast.message}</p>
+            <h4 className="text-xs font-bold text-gray-900 truncate">{toast.title}</h4>
+            <p className="text-[11px] text-gray-500 mt-0.5 leading-snug">{toast.message}</p>
           </div>
 
           <button
             onClick={() => onDismiss(toast.id)}
-            className="p-1 rounded-md text-slate-400 hover:text-white transition flex-shrink-0"
+            className="p-1 rounded-md text-gray-400 hover:text-gray-700 transition flex-shrink-0"
           >
             <X className="w-3.5 h-3.5" />
           </button>

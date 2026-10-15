@@ -173,50 +173,50 @@ export function getCategoryBadge(category: string) {
   switch (category) {
     case 'meeting':
       return {
-        bg: 'bg-blue-500/15',
-        border: 'border-blue-500/30',
-        text: 'text-blue-400',
+        bg: 'bg-blue-50',
+        border: 'border-blue-200',
+        text: 'text-blue-600',
         dot: 'bg-blue-400',
         label: 'Meeting',
       };
     case 'call':
       return {
-        bg: 'bg-emerald-500/15',
-        border: 'border-emerald-500/30',
-        text: 'text-emerald-400',
+        bg: 'bg-emerald-50',
+        border: 'border-emerald-200',
+        text: 'text-emerald-600',
         dot: 'bg-emerald-400',
         label: 'Call',
       };
     case 'focus':
       return {
-        bg: 'bg-purple-500/15',
-        border: 'border-purple-500/30',
-        text: 'text-purple-400',
-        dot: 'bg-purple-400',
+        bg: 'bg-violet-50',
+        border: 'border-violet-200',
+        text: 'text-violet-600',
+        dot: 'bg-violet-400',
         label: 'Focus Time',
       };
     case 'personal':
       return {
-        bg: 'bg-amber-500/15',
-        border: 'border-amber-500/30',
-        text: 'text-amber-400',
+        bg: 'bg-amber-50',
+        border: 'border-amber-200',
+        text: 'text-amber-600',
         dot: 'bg-amber-400',
         label: 'Personal',
       };
     case 'work':
       return {
-        bg: 'bg-indigo-500/15',
-        border: 'border-indigo-500/30',
-        text: 'text-indigo-400',
+        bg: 'bg-indigo-50',
+        border: 'border-indigo-200',
+        text: 'text-indigo-600',
         dot: 'bg-indigo-400',
         label: 'Work',
       };
     default:
       return {
-        bg: 'bg-slate-500/15',
-        border: 'border-slate-500/30',
-        text: 'text-slate-400',
-        dot: 'bg-slate-400',
+        bg: 'bg-gray-50',
+        border: 'border-gray-200',
+        text: 'text-gray-500',
+        dot: 'bg-gray-400',
         label: 'Event',
       };
   }

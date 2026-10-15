@@ -1,14 +1,12 @@
 import React from 'react';
 import {
-  Calendar,
   ChevronLeft,
   ChevronRight,
   Plus,
-  Sparkles,
   Bot,
   RotateCcw,
-  CheckCircle2
 } from 'lucide-react';
+import { ChronosLogo } from './ChronosLogo';
 import { CalendarViewMode } from '../types/calendar';
 
 interface HeaderProps {
@@ -36,7 +34,6 @@ export const Header: React.FC<HeaderProps> = ({
   isAiOpen,
   onToggleAi,
   onResetData,
-  totalEventsCount,
 }) => {
   const monthNames = [
     'January', 'February', 'March', 'April', 'May', 'June',
@@ -46,33 +43,26 @@ export const Header: React.FC<HeaderProps> = ({
   const currentMonthStr = `${monthNames[currentDate.getMonth()]} ${currentDate.getFullYear()}`;
 
   return (
-    <header className="border-b border-slate-800 bg-slate-900/90 backdrop-blur-md sticky top-0 z-30 px-4 py-3 sm:px-6">
+    <header className="border-b border-gray-200 bg-white sticky top-0 z-30 px-4 py-3 sm:px-6">
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
         {/* Brand & Date Navigation */}
         <div className="flex items-center justify-between md:justify-start gap-4">
           <div className="flex items-center gap-2.5">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-indigo-600 via-purple-600 to-pink-500 flex items-center justify-center shadow-lg shadow-indigo-500/20 text-white font-bold ring-1 ring-white/20">
-              <Calendar className="w-5 h-5" />
-            </div>
+            <ChronosLogo size={40} />
             <div>
               <div className="flex items-center gap-1.5">
-                <span className="font-bold text-lg tracking-tight text-white">Chronos</span>
-                <span className="text-xs px-2 py-0.5 rounded-full bg-gradient-to-r from-indigo-500/20 to-purple-500/20 text-indigo-300 border border-indigo-500/30 font-medium flex items-center gap-1">
-                  <Sparkles className="w-3 h-3 text-indigo-400 animate-pulse" />
-                  Gemini AI
-                </span>
+                <span className="font-bold text-lg tracking-tight text-gray-900">Daylie</span>
               </div>
-              <p className="text-xs text-slate-400">Intelligent Scheduling Prototype</p>
             </div>
           </div>
 
-          <div className="h-6 w-px bg-slate-800 hidden md:block" />
+          <div className="h-6 w-px bg-gray-200 hidden md:block" />
 
           {/* Date Picker Controls */}
-          <div className="flex items-center gap-1.5 bg-slate-800/80 p-1 rounded-xl border border-slate-700/60 shadow-inner">
+          <div className="flex items-center gap-1.5 bg-gray-50 p-1 rounded-xl border border-gray-200">
             <button
               onClick={onToday}
-              className="px-2.5 py-1 text-xs font-semibold rounded-lg text-slate-200 hover:text-white hover:bg-slate-700 transition"
+              className="px-2.5 py-1 text-xs font-semibold rounded-lg text-gray-600 hover:text-gray-900 hover:bg-white transition"
               title="Jump to today"
             >
               Today
@@ -80,20 +70,20 @@ export const Header: React.FC<HeaderProps> = ({
             <div className="flex items-center">
               <button
                 onClick={onPrev}
-                className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-700/80 transition"
+                className="p-1 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-white transition"
                 aria-label="Previous"
               >
                 <ChevronLeft className="w-4 h-4" />
               </button>
               <button
                 onClick={onNext}
-                className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-700/80 transition"
+                className="p-1 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-white transition"
                 aria-label="Next"
               >
                 <ChevronRight className="w-4 h-4" />
               </button>
             </div>
-            <span className="text-sm font-semibold text-slate-200 px-2 min-w-[130px] text-center">
+            <span className="text-sm font-semibold text-gray-700 px-2 min-w-[130px] text-center">
               {currentMonthStr}
             </span>
           </div>
@@ -102,15 +92,15 @@ export const Header: React.FC<HeaderProps> = ({
         {/* View Mode & Actions */}
         <div className="flex items-center justify-between md:justify-end gap-2.5">
           {/* View Mode Segmented Controls */}
-          <div className="flex items-center bg-slate-800/80 p-1 rounded-xl border border-slate-700/60 text-xs font-medium">
+          <div className="flex items-center bg-gray-50 p-1 rounded-xl border border-gray-200 text-xs font-medium">
             {(['month', 'week', 'day', 'agenda'] as CalendarViewMode[]).map((mode) => (
               <button
                 key={mode}
                 onClick={() => onViewModeChange(mode)}
                 className={`px-3 py-1.5 rounded-lg capitalize transition-all ${
                   viewMode === mode
-                    ? 'bg-indigo-600 text-white shadow-sm shadow-indigo-600/30 font-semibold'
-                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-700/50'
+                    ? 'bg-white text-gray-900 shadow-sm border border-gray-200 font-semibold'
+                    : 'text-gray-500 hover:text-gray-700 hover:bg-white/60'
                 }`}
               >
                 {mode}
@@ -122,31 +112,31 @@ export const Header: React.FC<HeaderProps> = ({
             {/* New Event Button */}
             <button
               onClick={onNewEvent}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white border border-slate-700 transition shadow-sm"
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-xl bg-gray-100 hover:bg-gray-200 text-gray-700 hover:text-gray-900 border border-gray-200 transition"
             >
-              <Plus className="w-4 h-4 text-indigo-400" />
+              <Plus className="w-4 h-4 text-indigo-500" />
               <span className="hidden sm:inline">Event</span>
             </button>
 
-            {/* Toggle AI Chat Assistant Button */}
+            {/* Toggle AI Chat */}
             <button
               onClick={onToggleAi}
-              className={`flex items-center gap-2 px-3.5 py-1.5 text-xs font-semibold rounded-xl transition shadow-md ${
+              className={`flex items-center gap-2 px-3.5 py-1.5 text-xs font-semibold rounded-xl transition shadow-sm ${
                 isAiOpen
-                  ? 'bg-gradient-to-r from-indigo-500 to-purple-600 text-white shadow-indigo-500/25 ring-2 ring-indigo-400/30'
-                  : 'bg-slate-800 text-indigo-300 hover:text-white hover:bg-slate-700 border border-indigo-500/30'
+                  ? 'bg-gray-900 text-white'
+                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200 border border-gray-200'
               }`}
             >
-              <Bot className="w-4 h-4 text-indigo-300" />
+              <Bot className="w-4 h-4" />
               <span>AI Assistant</span>
-              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+              <span className="w-2 h-2 rounded-full bg-emerald-400" />
             </button>
 
-            {/* Reset data helper */}
+            {/* Reset */}
             <button
               onClick={onResetData}
-              title="Reset to default prototype schedule"
-              className="p-1.5 rounded-xl text-slate-400 hover:text-slate-200 hover:bg-slate-800 border border-slate-800 transition"
+              title="Reset schedule"
+              className="p-1.5 rounded-xl text-gray-400 hover:text-gray-600 hover:bg-gray-100 border border-gray-200 transition"
             >
               <RotateCcw className="w-3.5 h-3.5" />
             </button>

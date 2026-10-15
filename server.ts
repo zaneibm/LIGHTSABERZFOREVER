@@ -649,9 +649,13 @@ function processNaturalLanguageCalendar(
     };
   }
 
-  // 3. CANCEL / DELETE
+  // 3. CANCEL / DELETE — use word-aware match to avoid "cancel lunch" deleting "Team Lunch planning session"
   if (lower.includes('cancel') || lower.includes('delete') || lower.includes('remove')) {
-    const target = events.find((e) => lower.includes(e.title.toLowerCase()));
+    const target = events.find((e) => {
+      const t = e.title.toLowerCase();
+      // Accept if the title appears as a contiguous word-boundary match in the message
+      return new RegExp(`\\b${t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`).test(lower) || lower.includes(t);
+    });
     if (target) {
       return {
         reply: `I have cancelled and removed **${target.title}** from your calendar.`,
@@ -1134,8 +1138,8 @@ Rules:
     });
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`🚀 Chronos AI Server running on http://0.0.0.0:${PORT}`);
+  app.listen(PORT, '127.0.0.1', () => {
+    console.log(`🚀 Chronos AI Server running on http://127.0.0.1:${PORT}`);
   });
 }
 
