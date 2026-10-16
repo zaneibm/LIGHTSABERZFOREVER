@@ -5,6 +5,126 @@
 // User current context reference: 2026-10-13 (Tuesday)
 export const DEFAULT_REFERENCE_DATE = '2026-10-13';
 
+export function extractExplicitDate(prompt: string, referenceDate: string): string | null {
+  const months = [
+    'january', 'february', 'march', 'april', 'may', 'june',
+    'july', 'august', 'september', 'october', 'november', 'december',
+  ];
+  const isoDate = prompt.match(/\b(\d{4})-(\d{2})-(\d{2})\b/);
+  const namedDate = prompt.match(
+    /\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\.?\s+(\d{1,2})(?:st|nd|rd|th)?(?:,?\s+(\d{4}))?\b/i
+  );
+
+  let year: number;
+  let month: number;
+  let day: number;
+  if (isoDate) {
+    year = Number(isoDate[1]);
+    month = Number(isoDate[2]);
+    day = Number(isoDate[3]);
+  } else if (namedDate) {
+    const monthText = namedDate[1].replace('.', '').toLowerCase();
+    month = months.findIndex((name) => name.startsWith(monthText.slice(0, 3))) + 1;
+    day = Number(namedDate[2]);
+    year = Number(namedDate[3] || referenceDate.slice(0, 4));
+    if (!namedDate[3]) {
+      const referenceMonth = Number(referenceDate.slice(5, 7));
+      if (month < referenceMonth) year += 1;
+    }
+  } else {
+    return null;
+  }
+
+  const date = new Date(Date.UTC(year, month - 1, day));
+  if (
+    !Number.isFinite(date.getTime()) ||
+    date.getUTCFullYear() !== year ||
+    date.getUTCMonth() !== month - 1 ||
+    date.getUTCDate() !== day
+  ) {
+    return null;
+  }
+
+  return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}
+
+export function getWeekdayDateConflict(prompt: string, referenceDate: string) {
+  const weekday = prompt.match(/\b(sunday|monday|tuesday|wednesday|thursday|friday|saturday)\b/i)?.[1];
+  const date = extractExplicitDate(prompt, referenceDate);
+  if (!weekday || !date) return null;
+
+  const requestedDate = new Date(`${date}T00:00:00Z`);
+  const actualWeekday = new Intl.DateTimeFormat('en-US', { weekday: 'long', timeZone: 'UTC' }).format(requestedDate);
+  if (actualWeekday.toLowerCase() === weekday.toLowerCase()) return null;
+
+  const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  const weekStart = new Date(requestedDate);
+  weekStart.setUTCDate(weekStart.getUTCDate() - weekStart.getUTCDay());
+  const matchingWeekday = new Date(weekStart);
+  matchingWeekday.setUTCDate(weekStart.getUTCDate() + dayNames.findIndex((day) => day.toLowerCase() === weekday.toLowerCase()));
+  const formatOption = (optionDate: Date) => ({
+    date: optionDate.toISOString().slice(0, 10),
+    label: new Intl.DateTimeFormat('en-US', {
+      weekday: 'long',
+      month: 'long',
+      day: 'numeric',
+      year: 'numeric',
+      timeZone: 'UTC',
+    }).format(optionDate),
+  });
+  const options = [formatOption(matchingWeekday), formatOption(requestedDate)];
+
+  return {
+    options,
+    message: `The weekday and date don't match: ${date} is ${actualWeekday}. Which should I use?\n\n1. ${options[0].label}\n2. ${options[1].label}\n\nReply with the weekday or date.`,
+  };
+}
+
+export function resolveWeekdayDateChoice(
+  optionsMessage: string,
+  answer: string,
+  referenceDate: string
+): string | null {
+  if (!/\bweekday and date don't match\b/i.test(optionsMessage)) return null;
+
+  const options = [...optionsMessage.matchAll(/^\d+\.\s+(.+)$/gm)]
+    .map((match) => ({
+      label: match[1],
+      date: extractExplicitDate(match[1], referenceDate),
+    }))
+    .filter((option): option is { label: string; date: string } => option.date !== null);
+  const answerDate = extractExplicitDate(answer, referenceDate);
+  if (answerDate) return options.find((option) => option.date === answerDate)?.date || null;
+
+  const weekday = answer.match(/\b(sunday|monday|tuesday|wednesday|thursday|friday|saturday)\b/i)?.[1]?.toLowerCase();
+  if (weekday) return options.find((option) => option.label.toLowerCase().startsWith(weekday))?.date || null;
+
+  const numberedChoice = answer.match(/^\s*([12])\s*$/)?.[1];
+  return numberedChoice ? options[Number(numberedChoice) - 1]?.date || null : null;
+}
+
+export function getScheduledEventTitle(prompt: string): string | null {
+  const attendee = getScheduledEventAttendee(prompt);
+
+  if (/\bcall\b/i.test(prompt)) return attendee ? `Call with ${attendee}` : 'Phone Call';
+  if (/\bmeeting\b/i.test(prompt)) return attendee ? `Meeting with ${attendee}` : 'Meeting';
+  if (/\bfocus(?:\s+time)?\b/i.test(prompt)) return 'Focus Time';
+  if (/\blunch\b/i.test(prompt)) return 'Lunch';
+  if (/\bstand[\s-]?up\b/i.test(prompt)) return 'Standup';
+
+  return null;
+}
+
+export function getScheduledEventAttendee(prompt: string): string | null {
+  const attendeeMatch = prompt.match(
+    /\bwith\s+([a-z][a-z'-]*(?:\s+(?!on\b|at\b|for\b|this\b|tomorrow\b|today\b|monday\b|tuesday\b|wednesday\b|thursday\b|friday\b|saturday\b|sunday\b)[a-z][a-z'-]*)?)/i
+  );
+  return attendeeMatch?.[1]
+    .split(/\s+/)
+    .map((name) => `${name.charAt(0).toUpperCase()}${name.slice(1).toLowerCase()}`)
+    .join(' ') || null;
+}
+
 export function parseDate(dateStr: string): Date {
   // Safe parsing of YYYY-MM-DD
   const [year, month, day] = dateStr.split('-').map(Number);

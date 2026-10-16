@@ -4,6 +4,14 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI, Type } from '@google/genai';
+import { SchedulingPreferences } from './src/types/calendar';
+import {
+  extractExplicitDate,
+  getScheduledEventAttendee,
+  getScheduledEventTitle,
+  getWeekdayDateConflict,
+  resolveWeekdayDateChoice,
+} from './src/utils/dateUtils';
 
 dotenv.config();
 
@@ -37,11 +45,127 @@ interface ChatRequestBody {
   events: CalendarEventPayload[];
   currentDateTime: string;
   timeZone?: string;
+  schedulingPreferences?: SchedulingPreferences;
 }
+
+const DEFAULT_SCHEDULING_PREFERENCES: SchedulingPreferences = {
+  workDays: [1, 2, 3, 4, 5],
+  workdayStart: '09:00',
+  workdayEnd: '17:00',
+  preferredTimeOfDay: 'any',
+  bufferMinutes: 15,
+};
 
 function timeToMinutes(time24: string): number {
   const [h, m] = (time24 || '00:00').split(':').map(Number);
   return (h || 0) * 60 + (m || 0);
+}
+
+function formatDateLabel(date: string): string {
+  return new Intl.DateTimeFormat('en-US', {
+    weekday: 'long',
+    month: 'long',
+    day: 'numeric',
+    year: 'numeric',
+    timeZone: 'UTC',
+  }).format(new Date(`${date}T00:00:00Z`));
+}
+
+function findAvailableTimeSlots(
+  prompt: string,
+  events: CalendarEventPayload[],
+  todayDate: string,
+  preferences: SchedulingPreferences
+): Array<{ date: string; start: string; end: string }> {
+  const lower = prompt.toLowerCase();
+  const durationMatch = lower.match(/\b(15|30|45|60|90|120)\s*(minutes?|mins?|m|hours?|hrs?|h)\b/);
+  const durationMinutes = durationMatch
+    ? Number(durationMatch[1]) * (/hours?|hrs?|h/.test(durationMatch[2]) ? 60 : 1)
+    : /\bone hour\b/.test(lower)
+      ? 60
+      : /\btwo hours\b/.test(lower)
+        ? 120
+        : 30;
+  const explicitDate = extractExplicitDate(prompt, todayDate);
+  const weekdayEntry = Object.entries({
+    sunday: 0, monday: 1, tuesday: 2, wednesday: 3, thursday: 4, friday: 5, saturday: 6,
+  }).find(([day]) => lower.includes(day));
+  const rangeStart = explicitDate || todayDate;
+  let daysToSearch = 7;
+
+  if (explicitDate || /\btoday\b|\btomorrow\b/.test(lower) || weekdayEntry) {
+    daysToSearch = 1;
+  }
+
+  const dates: string[] = [];
+  const startDate = new Date(`${rangeStart}T00:00:00Z`);
+  if (!explicitDate && lower.includes('tomorrow')) startDate.setUTCDate(startDate.getUTCDate() + 1);
+  if (!explicitDate && weekdayEntry) {
+    const todayWeekday = startDate.getUTCDay();
+    let offset = weekdayEntry[1] - todayWeekday;
+    if (offset < 0) offset += 7;
+    startDate.setUTCDate(startDate.getUTCDate() + offset);
+  }
+  for (let offset = 0; offset < daysToSearch; offset++) {
+    const date = new Date(startDate);
+    date.setUTCDate(date.getUTCDate() + offset);
+    const dateString = date.toISOString().slice(0, 10);
+    if (preferences.workDays.includes(date.getUTCDay())) dates.push(dateString);
+  }
+
+  const startOfDay = timeToMinutes(preferences.workdayStart);
+  const endOfDay = timeToMinutes(preferences.workdayEnd);
+  const buffer = preferences.bufferMinutes;
+  const slots: Array<{ date: string; start: string; end: string; preferenceScore: number }> = [];
+
+  for (const date of dates) {
+    const busy = events
+      .filter((event) => event.startDate === date)
+      .map((event) => ({
+        start: Math.max(0, timeToMinutes(event.startTime) - buffer),
+        end: Math.min(24 * 60, timeToMinutes(event.endTime) + buffer),
+      }))
+      .sort((a, b) => a.start - b.start);
+    for (let start = startOfDay; start + durationMinutes <= endOfDay; start += 15) {
+      const end = start + durationMinutes;
+      if (busy.some((event) => start < event.end && end > event.start)) continue;
+      const preferenceScore =
+        preferences.preferredTimeOfDay === 'morning'
+          ? (start >= 12 * 60 ? 1 : 0)
+          : preferences.preferredTimeOfDay === 'afternoon'
+            ? (start < 12 * 60 ? 1 : 0)
+            : 0;
+      slots.push({
+        date,
+        start: `${String(Math.floor(start / 60)).padStart(2, '0')}:${String(start % 60).padStart(2, '0')}`,
+        end: `${String(Math.floor(end / 60)).padStart(2, '0')}:${String(end % 60).padStart(2, '0')}`,
+        preferenceScore,
+      });
+    }
+  }
+
+  return slots
+    .sort((a, b) => a.preferenceScore - b.preferenceScore || a.date.localeCompare(b.date) || a.start.localeCompare(b.start))
+    .slice(0, 3)
+    .map(({ date, start, end }) => ({ date, start, end }));
+}
+
+function getSchedulingPreferences(input?: SchedulingPreferences): SchedulingPreferences {
+  const isValidTime = (time: string) => /^\d{2}:\d{2}$/.test(time) && timeToMinutes(time) < 24 * 60;
+  if (
+    input &&
+    Array.isArray(input.workDays) &&
+    input.workDays.length > 0 &&
+    input.workDays.every((day) => Number.isInteger(day) && day >= 0 && day <= 6) &&
+    isValidTime(input.workdayStart) &&
+    isValidTime(input.workdayEnd) &&
+    timeToMinutes(input.workdayStart) < timeToMinutes(input.workdayEnd) &&
+    ['any', 'morning', 'afternoon'].includes(input.preferredTimeOfDay) &&
+    [0, 10, 15, 30, 45].includes(input.bufferMinutes)
+  ) {
+    return input;
+  }
+  return DEFAULT_SCHEDULING_PREFERENCES;
 }
 
 function format12h(time24: string): string {
@@ -74,6 +198,22 @@ function normalizeDate(d: string, todayDate: string): string {
   return d;
 }
 
+function getSchedulingClarification(prompt: string, todayDate: string): string | null {
+  const isSchedulingRequest = /\b(schedule|book|add|set up|create)\b/i.test(prompt);
+  if (!isSchedulingRequest) return null;
+
+  const weekday = prompt.match(/\b(sunday|monday|tuesday|wednesday|thursday|friday|saturday)\b/i)?.[1];
+  const explicitDate = extractExplicitDate(prompt, todayDate);
+  if (explicitDate) {
+    return getWeekdayDateConflict(prompt, todayDate)?.message || null;
+  }
+
+  if (/\b(today|tomorrow)\b/i.test(prompt)) return null;
+  return weekday
+    ? `Which date do you mean for ${weekday}? Please include the month and day (for example, October 19) so I don't choose the wrong date.`
+    : 'What date should I schedule it for? Please include the month and day (for example, October 19).';
+}
+
 // Built-in intelligent natural language calendar engine
 function processNaturalLanguageCalendar(
   prompt: string,
@@ -97,7 +237,16 @@ function processNaturalLanguageCalendar(
   let targetDate = todayDate;
   let targetDayLabel = 'Today';
 
-  if (lower.includes('tomorrow')) {
+  const explicitDate = extractExplicitDate(prompt, todayDate);
+  if (explicitDate) {
+    targetDate = explicitDate;
+    targetDayLabel = new Intl.DateTimeFormat('en-US', {
+      weekday: 'long',
+      month: 'long',
+      day: 'numeric',
+      timeZone: 'UTC',
+    }).format(new Date(`${explicitDate}T00:00:00Z`));
+  } else if (lower.includes('tomorrow')) {
     const d = new Date(todayDate);
     d.setDate(d.getDate() + 1);
     const m = String(d.getMonth() + 1).padStart(2, '0');
@@ -164,12 +313,23 @@ function processNaturalLanguageCalendar(
     lower.includes('set up') ||
     lower.includes('create')
   ) {
+    const clarification = getSchedulingClarification(prompt, todayDate);
+    if (clarification) {
+      return {
+        reply: clarification,
+        actions: [],
+      };
+    }
+
     // Extract time
     let startTime = '16:30';
     let endTime = '17:00';
 
     // Regex for time like 4:30, 4:30pm, 4pm, 10:00, 10am, 16:30
-    const timeMatch = prompt.match(/\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b/i);
+    const timeMatch =
+      prompt.match(/\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/i) ||
+      prompt.match(/\bat\s+(\d{1,2})(?::(\d{2}))?\b/i) ||
+      prompt.match(/\b(\d{1,2}):(\d{2})\b/);
     if (timeMatch) {
       let hour = parseInt(timeMatch[1], 10);
       const minutes = timeMatch[2] ? parseInt(timeMatch[2], 10) : 0;
@@ -197,39 +357,33 @@ function processNaturalLanguageCalendar(
     }
 
     // Extract title & category
-    let title = 'Meeting';
+    let title = getScheduledEventTitle(prompt) || 'Meeting';
     let category = 'meeting';
     let attendees: string[] = [];
 
-    if (lower.includes('with rob')) {
-      title = 'Call with Rob';
+    const attendee = getScheduledEventAttendee(prompt);
+    if (attendee) attendees = [attendee];
+
+    if (lower.includes('call')) {
       category = 'call';
-      attendees = ['Rob'];
-    } else if (lower.includes('call')) {
-      category = 'call';
-      const withMatch = prompt.match(/with\s+([A-Za-z]+(?:\s+[A-Za-z]+)?)/i);
-      if (withMatch) {
-        title = `Call with ${withMatch[1]}`;
-        attendees = [withMatch[1]];
-      } else {
-        title = 'Phone Call';
-      }
     } else if (lower.includes('focus')) {
-      title = 'Focus Time';
       category = 'focus';
     } else if (lower.includes('lunch')) {
-      title = 'Lunch';
       category = 'personal';
-    } else if (lower.includes('standup')) {
-      title = 'Standup';
-      category = 'meeting';
-    } else {
+    }
+
+    if (!getScheduledEventTitle(prompt)) {
       const cleanTitle = prompt
         .replace(/schedule\s+(?:a\s+)?/i, '')
         .replace(/book\s+(?:a\s+)?/i, '')
         .replace(/add\s+(?:a\s+)?/i, '')
         .replace(/\bat\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?/i, '')
-        .replace(/\bon\s+\w+/i, '')
+        .replace(/\b(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\.?\s+\d{1,2}(?:st|nd|rd|th)?(?:,?\s+\d{4})?\b/gi, '')
+        .replace(/\b\d{4}-\d{2}-\d{2}\b/g, '')
+        .replace(/\b(?:this week|during the week|sometime this week|any day this week)\b/gi, '')
+        .replace(/\b(?:sunday|monday|tuesday|wednesday|thursday|friday|saturday|today|tomorrow)\b/gi, '')
+        .replace(/\bon\b/gi, '')
+        .replace(/\s+/g, ' ')
         .trim();
       title = cleanTitle.charAt(0).toUpperCase() + cleanTitle.slice(1) || 'Scheduled Event';
     }
@@ -296,7 +450,7 @@ function processNaturalLanguageCalendar(
 
   // Default helpful message
   return {
-    reply: `I'm here to help manage your schedule! You can ask:\n\n• **"What meetings do I have on tuesday?"**\n• **"Schedule a call with Rob at 4:30"**\n• **"Book 2 hours of focus time tomorrow"**\n• **"Show my schedule for today"**`,
+    reply: `I'm here to help manage your schedule! You can ask:\n\n• **"What meetings do I have on tuesday?"**\n    • **"Schedule a call with Rob on October 16 at 4:30 PM"**\n• **"Book 2 hours of focus time tomorrow"**\n• **"Show my schedule for today"**`,
     actions: [],
   };
 }
@@ -318,6 +472,63 @@ async function startServer() {
     const { messages = [], events = [], currentDateTime, timeZone = 'UTC' } = req.body as ChatRequestBody;
     const todayStr = currentDateTime ? currentDateTime.split('T')[0] : '2026-10-13';
     const latestUserMessage = messages[messages.length - 1]?.content || '';
+    const previousAssistantMessage = messages.slice(0, -1).reverse().find((message) => message.role === 'assistant');
+    const previousMessages = messages.slice(0, -1);
+    const pendingScheduleIndex = previousMessages.reduce((lastIndex, message, index) => {
+      const isSchedulingRequest =
+        message.role === 'user' &&
+        /\b(schedule|book|add|set up|create)\b/i.test(message.content);
+      return isSchedulingRequest ? index : lastIndex;
+    }, -1);
+    const isWeekdayDateMismatch =
+      /\bweekday and date don't match\b/i.test(previousAssistantMessage?.content || '') &&
+      pendingScheduleIndex !== -1;
+    const selectedMismatchDate = isWeekdayDateMismatch
+      ? resolveWeekdayDateChoice(previousAssistantMessage?.content || '', latestUserMessage, todayStr)
+      : null;
+    const isSchedulingFollowUp =
+      /\bwhat date should i schedule\b|\bwhich date do you mean\b/i.test(previousAssistantMessage?.content || '') &&
+      pendingScheduleIndex !== -1;
+    const originalSchedule = previousMessages
+      .slice(pendingScheduleIndex)
+      .filter((message) => message.role === 'user')
+      .map((message) => message.content)
+      .join(' ');
+    const schedulingPrompt = selectedMismatchDate
+      ? `${originalSchedule
+          .replace(/\b(?:sunday|monday|tuesday|wednesday|thursday|friday|saturday)\b/gi, '')
+          .replace(/\b(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\.?\s+\d{1,2}(?:st|nd|rd|th)?(?:,?\s+\d{4})?\b/gi, '')
+          .replace(/\b\d{4}-\d{2}-\d{2}\b/g, '')
+          .replace(/\s+/g, ' ')
+          .trim()} on ${selectedMismatchDate}`
+      : isSchedulingFollowUp
+        ? `${originalSchedule} ${latestUserMessage}`
+        : latestUserMessage;
+    if (isWeekdayDateMismatch && !selectedMismatchDate) {
+      return res.json({ reply: previousAssistantMessage?.content, actions: [] });
+    }
+    if (selectedMismatchDate) {
+      return res.json(processNaturalLanguageCalendar(schedulingPrompt, events, todayStr));
+    }
+    const preferences = getSchedulingPreferences(req.body.schedulingPreferences);
+    if (/\b(find|suggest|recommend)\b.{0,35}\b(time|slot|availability)\b|\bwhen am i (?:free|available)\b|\bavailable slots?\b/i.test(latestUserMessage)) {
+      const slots = findAvailableTimeSlots(latestUserMessage, events, todayStr, preferences);
+      if (slots.length === 0) {
+        return res.json({
+          reply: 'I couldn’t find an open slot in your working hours that fits your calendar and buffer preferences. Try changing your working hours, buffer, or search date.',
+          actions: [],
+        });
+      }
+      const slotLines = slots.map((slot, index) =>
+        `${index + 1}. ${formatDateLabel(slot.date)} at ${format12h(slot.start)}–${format12h(slot.end)}`
+      );
+      return res.json({
+        reply: `Here are some open times based on your working days, hours, calendar conflicts, and ${preferences.bufferMinutes}-minute buffer:\n\n${slotLines.join('\n')}\n\nTell me which date and time you’d like to schedule.`,
+        actions: [],
+      });
+    }
+    const schedulingClarification = getSchedulingClarification(schedulingPrompt, todayStr);
+    if (schedulingClarification) return res.json({ reply: schedulingClarification, actions: [] });
 
     const apiKey = process.env.GEMINI_API_KEY;
 
@@ -349,6 +560,8 @@ Your Capabilities:
 Rules:
 - If scheduling "call with Rob at 4:30", set title: "Call with Rob", startDate: "${todayStr}", startTime: "16:30", endDate: "${todayStr}", endTime: "17:00", category: "call", attendees: ["Rob"].
 - Default duration is 30 minutes if unspecified.
+- When suggesting open times, honor these scheduling preferences: ${JSON.stringify(preferences)}. Check all existing events and include the configured buffer around busy times.
+- Never create a scheduled event unless the user specified its exact date. If they provide only a weekday or no date, ask which calendar date they mean rather than guessing. Use the chat history to combine their answer with the original event details.
 - Output times strictly in 24-hour format HH:MM.
 - Output dates in YYYY-MM-DD format.`;
 
@@ -428,6 +641,9 @@ Rules:
                 if (parsed.actions && Array.isArray(parsed.actions)) {
                   parsed.actions = parsed.actions.map((act: any) => {
                     if (act.event) {
+                      if (act.type === 'schedule') {
+                        act.event.title = getScheduledEventTitle(schedulingPrompt) || act.event.title;
+                      }
                       act.event.startDate = normalizeDate(act.event.startDate, todayStr);
                       act.event.endDate = normalizeDate(act.event.endDate || act.event.startDate, todayStr);
                       act.event.startTime = normalizeTime(act.event.startTime);
@@ -450,7 +666,7 @@ Rules:
     }
 
     // Seamless fallback to natural language calendar engine
-    const fallbackResult = processNaturalLanguageCalendar(latestUserMessage, events, todayStr);
+    const fallbackResult = processNaturalLanguageCalendar(schedulingPrompt, events, todayStr);
     return res.json(fallbackResult);
   });
 
