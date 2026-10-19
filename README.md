@@ -64,7 +64,6 @@ npm start
 - **Reminders**: Set an optional browser or in-app alert from 5 minutes to 1 day before an event. Browser notifications require permission and the calendar to remain open.
 - **Color Coded Categories**: Meetings (Blue), Calls (Emerald), Focus Time (Purple), Personal (Amber), Work (Indigo).
 - **Scheduling Preferences**: Choose working days and hours, a preferred time of day, and a buffer for travel or breaks. Ask Chronos to find or suggest open times to get conflict-aware options.
-- **Voice-to-Text**: Use the microphone button in the AI chat to dictate a request, review or edit the transcript, then send it normally. Speech recognition and microphone permission depend on browser support.
 
 ### 🤖 AI Scheduling Assistant
 Try typing commands into the AI Assistant chat window:

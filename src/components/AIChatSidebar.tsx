@@ -15,45 +15,9 @@ import {
   Undo2,
   Loader2,
   CalendarDays,
-  Mic,
-  MicOff,
 } from 'lucide-react';
 import { CalendarEvent, CalendarTheme, ChatMessage } from '../types/calendar';
 import { formatTime12h, parseDate } from '../utils/dateUtils';
-
-interface SpeechRecognitionResultItem {
-  readonly 0: { transcript: string };
-  readonly isFinal: boolean;
-}
-
-interface SpeechRecognitionResultEvent {
-  readonly resultIndex: number;
-  readonly results: ArrayLike<SpeechRecognitionResultItem>;
-}
-
-interface SpeechRecognitionErrorEvent {
-  readonly error: string;
-}
-
-interface SpeechRecognitionInstance {
-  lang: string;
-  continuous: boolean;
-  interimResults: boolean;
-  onresult: ((event: SpeechRecognitionResultEvent) => void) | null;
-  onerror: ((event: SpeechRecognitionErrorEvent) => void) | null;
-  onend: (() => void) | null;
-  start: () => void;
-  stop: () => void;
-}
-
-interface SpeechRecognitionConstructor {
-  new (): SpeechRecognitionInstance;
-}
-
-type SpeechRecognitionWindow = Window & {
-  SpeechRecognition?: SpeechRecognitionConstructor;
-  webkitSpeechRecognition?: SpeechRecognitionConstructor;
-};
 
 interface AIChatSidebarProps {
   isOpen: boolean;
@@ -81,11 +45,8 @@ export const AIChatSidebar: React.FC<AIChatSidebarProps> = ({
   theme,
 }) => {
   const [input, setInput] = useState('');
-  const [isListening, setIsListening] = useState(false);
-  const [speechError, setSpeechError] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-  const recognitionRef = useRef<SpeechRecognitionInstance | null>(null);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -95,67 +56,8 @@ export const AIChatSidebar: React.FC<AIChatSidebarProps> = ({
     if (isOpen) {
       scrollToBottom();
       inputRef.current?.focus();
-    } else {
-      recognitionRef.current?.stop();
     }
   }, [messages, isOpen]);
-
-  useEffect(() => () => recognitionRef.current?.stop(), []);
-
-  const toggleVoiceInput = () => {
-    if (isListening) {
-      recognitionRef.current?.stop();
-      return;
-    }
-
-    const Recognition =
-      (window as SpeechRecognitionWindow).SpeechRecognition ||
-      (window as SpeechRecognitionWindow).webkitSpeechRecognition;
-    if (!Recognition) {
-      setSpeechError('Voice input is not supported in this browser. Try Chrome or another browser with speech recognition.');
-      return;
-    }
-
-    setSpeechError('');
-    const recognition = new Recognition();
-    recognition.lang = navigator.language || 'en-US';
-    recognition.continuous = true;
-    recognition.interimResults = true;
-    recognition.onresult = (event) => {
-      const transcript = Array.from(event.results)
-        .map((result) => result[0].transcript)
-        .join('')
-        .trim();
-      const prefix = input.trim();
-      setInput(prefix ? `${prefix} ${transcript}` : transcript);
-    };
-    recognition.onerror = (event) => {
-      const errorMessage =
-        event.error === 'not-allowed' || event.error === 'service-not-allowed'
-          ? 'Microphone access was denied. Allow microphone access in your browser to use voice input.'
-          : event.error === 'no-speech'
-            ? 'No speech was detected. Try speaking again.'
-            : 'Voice input could not start. Check your microphone and try again.';
-      setSpeechError(errorMessage);
-      setIsListening(false);
-      recognitionRef.current = null;
-    };
-    recognition.onend = () => {
-      setIsListening(false);
-      recognitionRef.current = null;
-    };
-
-    recognitionRef.current = recognition;
-    try {
-      recognition.start();
-      setIsListening(true);
-    } catch (error) {
-      console.error('Failed to start voice input', error);
-      recognitionRef.current = null;
-      setIsListening(false);
-      setSpeechError('Voice input could not start. Check your microphone and try again.');
-    }
-  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -394,23 +296,8 @@ export const AIChatSidebar: React.FC<AIChatSidebarProps> = ({
             onChange={(e) => setInput(e.target.value)}
             placeholder="Ask about meetings or schedule an event..."
             disabled={isLoading}
-            className="w-full pl-3.5 pr-20 py-2.5 rounded-xl bg-slate-800 border border-slate-700 text-xs sm:text-sm text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 disabled:opacity-50"
+            className="w-full pl-3.5 pr-12 py-2.5 rounded-xl bg-slate-800 border border-slate-700 text-xs sm:text-sm text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 disabled:opacity-50"
           />
-          <button
-            type="button"
-            onClick={toggleVoiceInput}
-            disabled={isLoading}
-            aria-label={isListening ? 'Stop voice input' : 'Start voice input'}
-            aria-pressed={isListening}
-            title={isListening ? 'Stop voice input' : 'Start voice input'}
-            className={`absolute right-10 p-1.5 rounded-lg border transition disabled:opacity-30 ${
-              isListening
-                ? 'bg-rose-600 border-rose-500 text-white animate-pulse'
-                : 'bg-slate-700 border-slate-600 text-slate-200 hover:bg-slate-600'
-            }`}
-          >
-            {isListening ? <MicOff className="w-3.5 h-3.5" /> : <Mic className="w-3.5 h-3.5" />}
-          </button>
           <button
             type="submit"
             disabled={!input.trim() || isLoading}
@@ -419,11 +306,6 @@ export const AIChatSidebar: React.FC<AIChatSidebarProps> = ({
             <Send className="w-3.5 h-3.5" />
           </button>
         </div>
-        <p className={`text-[10px] text-center mt-1.5 ${speechError ? 'text-rose-300' : isListening ? 'text-rose-300' : 'text-slate-400'}`} aria-live="polite">
-          {speechError || (isListening
-            ? 'Listening… Your speech will appear here; stop the microphone when finished.'
-            : 'Try: "What meetings do I have on tuesday?" or "Schedule a call with Rob at 4:30"')}
-        </p>
       </form>
     </aside>
   );
