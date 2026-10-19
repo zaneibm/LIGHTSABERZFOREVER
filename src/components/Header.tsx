@@ -67,8 +67,8 @@ export const Header: React.FC<HeaderProps> = ({
     <header className="border-b border-gray-200 bg-white sticky top-0 z-30 px-4 py-3 sm:px-6">
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
         {/* Brand & Date Navigation */}
-        <div className="flex items-center justify-between md:justify-start gap-4">
-          <div className="flex items-center gap-2.5">
+        <div className="flex flex-wrap items-center justify-between md:justify-start gap-4">
+          <div className="flex shrink-0 items-center gap-2.5">
             <ChronosLogo size={40} />
             <div>
               <div className="flex items-center gap-1.5">
@@ -78,7 +78,7 @@ export const Header: React.FC<HeaderProps> = ({
                     src="/halloween/pumpkins.png"
                     alt=""
                     aria-hidden="true"
-                    className="h-9 w-auto object-contain"
+                    className="h-9 w-auto shrink-0 object-contain"
                   />
                 )}
               </div>

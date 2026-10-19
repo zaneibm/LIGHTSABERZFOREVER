@@ -322,6 +322,17 @@ export default function App() {
       const isDateFollowUp =
         /\bwhat date should i schedule\b|\bwhich date do you mean\b|\bweekday and date don't match\b/i.test(previousAssistantMessage?.content || '');
       let schedulingContext = userPrompt;
+      const isWeatherLocationFollowUp =
+        /couldn['’]t get a weather forecast[\s\S]{0,180}(?:include|reply with)\s+(?:(?:a|your)\s+)?city/i.test(previousAssistantMessage?.content || '');
+      if (isWeatherLocationFollowUp) {
+        const pendingWeatherSchedule = [...chatMessages].reverse().find((message) =>
+          message.role === 'user' &&
+          /\b(schedule|book|add|set up|create)\b/i.test(message.content) &&
+          /\b(if|when|provided that|as long as)\b/i.test(message.content) &&
+          /\b(above|over|higher than|warmer than|at least|no less than)\s+\d{1,3}\b/i.test(message.content)
+        );
+        if (pendingWeatherSchedule) schedulingContext = pendingWeatherSchedule.content;
+      }
       if (!/\b(schedule|book|add|set up|create)\b/i.test(userPrompt) && isDateFollowUp) {
         let pendingRequestIndex = -1;
         chatMessages.forEach((message, index) => {
@@ -381,7 +392,7 @@ export default function App() {
       const data = await response.json();
       const actionsApplied: Array<{ type: 'schedule' | 'update' | 'delete'; eventTitle: string; details?: string }> = [];
       const explicitScheduleDate = extractExplicitDate(schedulingContext, todayStr);
-      const hasRelativeScheduleDate = /\b(today|tomorrow)\b/i.test(schedulingContext);
+      const hasRelativeScheduleDate = /\b(today|tomorrow|sunday|monday|tuesday|wednesday|thursday|friday|saturday)\b/i.test(schedulingContext);
       const hasExplicitScheduleDate = Boolean(explicitScheduleDate || hasRelativeScheduleDate);
       const weekdayDateConflict = getWeekdayDateConflict(schedulingContext, todayStr);
       const blockedScheduleAction =

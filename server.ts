@@ -78,7 +78,8 @@ function findAvailableTimeSlots(
   prompt: string,
   events: CalendarEventPayload[],
   todayDate: string,
-  preferences: SchedulingPreferences
+  preferences: SchedulingPreferences,
+  maxResults = 3,
 ): Array<{ date: string; start: string; end: string }> {
   const lower = prompt.toLowerCase();
   const durationMatch = lower.match(/\b(15|30|45|60|90|120)\s*(minutes?|mins?|m|hours?|hrs?|h)\b/);
@@ -149,7 +150,7 @@ function findAvailableTimeSlots(
 
   return slots
     .sort((a, b) => a.preferenceScore - b.preferenceScore || a.date.localeCompare(b.date) || a.start.localeCompare(b.start))
-    .slice(0, 3)
+    .slice(0, maxResults)
     .map(({ date, start, end }) => ({ date, start, end }));
 }
 
@@ -844,7 +845,7 @@ const FORECAST_DAYS = 16;
 
 // Matches messages that are clearly weather-related (so we don't fetch for every chat).
 const WEATHER_KEYWORDS =
-  /\b(weather|forecast|rain|raining|rainy|snow|snowy|storm|stormy|sunny|cloudy|windy|wind|temperature|temp|umbrella|jacket|coat|picnic|outdoor|outdoors|hike|hiking|bbq|barbecue|beach|humid|drizzle|thunder|lightning|hot|cold|warm|cool|freezing)\b/i;
+  /\b(weather|forecast|rain|raining|rainy|snow|snowy|storm|stormy|sunny|cloudy|windy|wind|temperature|temp|degree|degrees|umbrella|jacket|coat|picnic|outdoor|outdoors|hike|hiking|bbq|barbecue|beach|humid|drizzle|thunder|lightning|hot|cold|warm|cool|freezing)\b/i;
 
 // WMO weather-code descriptions
 const WMO_CODES: Record<number, string> = {
@@ -868,6 +869,7 @@ interface DayForecast {
   rainChancePct: number; precipInch: number; precipMm: number;
   windMph: number; windKph: number;
   dryWindows: string[]; // 08:00–20:00 gaps of ≥2 h with ≤30 % rain chance
+  hourlyTemperatures: Array<{ time: string; tempC: number; tempF: number }>;
 }
 interface WeatherForecast { place: string; days: DayForecast[] }
 
@@ -876,24 +878,82 @@ const geoCache = new Map<string, GeoPlace | null>();
 const forecastCache = new Map<string, { at: number; data: WeatherForecast }>();
 
 function cityFromMessage(msg: string): string | null {
-  // "...in Seattle", "...for New York", "...near Austin" – first capitalised word(s)
+  // Accept city names regardless of capitalization, including "Buffalo, New York".
   const SKIP = new Set([
     ...DAY_NAMES, 'Today', 'Tomorrow', 'Tonight',
     'January','February','March','April','May','June',
     'July','August','September','October','November','December',
-    'The', 'My', 'A', 'An', 'Is', 'Will', 'Do',
+    'The', 'My', 'A', 'An', 'Is', 'Will', 'Do', 'Next', 'This',
+    'Week', 'Weekend', 'Morning', 'Afternoon', 'Evening', 'Forecast',
   ]);
-  const m = msg.match(/\b(?:in|for|near|around)\s+([A-Z][\p{L}.'\-]*(?:\s+[A-Z][\p{L}.'\-]*){0,2})/u);
+  const m = msg.match(/\b(?:in|for|near|around)\s+([\p{L}][\p{L}.'’-]*(?:\s*,?\s+[\p{L}][\p{L}.'’-]*){0,3})/iu);
   if (!m) return null;
-  const words = m[1].split(/\s+/).filter((w) => !SKIP.has(w));
-  const city = words.join(' ').trim();
-  return city.length >= 2 && city.length <= 60 ? city : null;
+  const city = m[1].trim().replace(/\s+/g, ' ');
+  const words = city.match(/\p{L}[\p{L}.'’-]*/gu) || [];
+  const hasPlaceName = words.some((word) => !SKIP.has(word[0].toUpperCase() + word.slice(1)));
+  return hasPlaceName && city.length >= 2 && city.length <= 60 ? city : null;
 }
 
 function cityFromTimezone(tz: string): string | null {
   const parts = (tz || '').split('/');
   if (parts.length < 2) return null;
   return parts[parts.length - 1].replace(/_/g, ' ');
+}
+
+function locationFromConversation(messages: ChatRequestBody['messages']): string | null {
+  let locationWasRequested = false;
+  let location: string | null = null;
+
+  for (const message of messages) {
+    if (message.role === 'assistant') {
+      locationWasRequested = /\b(?:include|provide|tell me|reply with)\s+(?:(?:a|your)\s+)?city\b|\bwhat city\b|\bwhich city\b/i.test(message.content);
+      continue;
+    }
+    if (message.role !== 'user' || !locationWasRequested) continue;
+
+    const candidate = message.content.trim();
+    if (
+      candidate.length <= 60 &&
+      /^[\p{L}][\p{L}.'’-]*(?:\s*,\s*[\p{L}][\p{L}.'’-]*){0,2}$/u.test(candidate)
+    ) {
+      location = candidate;
+    }
+    locationWasRequested = false;
+  }
+
+  return location;
+}
+
+function isConditionalWeatherScheduleRequest(message: string, imperial: boolean): boolean {
+  return /\b(schedule|book|add|set up|create)\b/i.test(message) &&
+    /\b(if|when|provided that|as long as)\b/i.test(message) &&
+    Boolean(getWeatherThreshold(message, imperial));
+}
+
+function getPendingConditionalWeatherSchedule(
+  messages: ChatRequestBody['messages'],
+  imperial: boolean,
+): string | null {
+  let locationRequestIndex = -1;
+  for (let index = messages.length - 2; index >= 0; index--) {
+    const message = messages[index];
+    if (
+      message.role === 'assistant' &&
+      /couldn['’]t get a weather forecast[\s\S]{0,180}(?:include|reply with)\s+(?:(?:a|your)\s+)?city/i.test(message.content)
+    ) {
+      locationRequestIndex = index;
+      break;
+    }
+  }
+  if (locationRequestIndex === -1) return null;
+
+  for (let index = locationRequestIndex - 1; index >= 0; index--) {
+    const message = messages[index];
+    if (message.role === 'user' && isConditionalWeatherScheduleRequest(message.content, imperial)) {
+      return message.content;
+    }
+  }
+  return null;
 }
 
 async function geocodeByName(name: string): Promise<GeoPlace | null> {
@@ -914,9 +974,7 @@ async function geocodeByName(name: string): Promise<GeoPlace | null> {
 }
 
 async function geocodeByCoords(lat: number, lon: number, tz: string): Promise<GeoPlace> {
-  // Reverse-geocode via Open-Meteo's geocoding API isn't available, so we use the
-  // timezone city name as a friendly label and trust the supplied coordinates directly.
-  const label = cityFromTimezone(tz) || `${lat.toFixed(2)},${lon.toFixed(2)}`;
+  const label = 'your current location';
   return { name: label, latitude: lat, longitude: lon, timezone: tz };
 }
 
@@ -948,7 +1006,7 @@ async function fetchForecast(place: GeoPlace): Promise<WeatherForecast | null> {
       // Request both unit systems so the model/user can choose
       daily: 'weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,precipitation_sum,wind_speed_10m_max',
       daily_variable_additional: 'temperature_2m_max,temperature_2m_min,precipitation_sum,wind_speed_10m_max',
-      hourly: 'precipitation_probability',
+      hourly: 'precipitation_probability,temperature_2m',
       timezone: 'auto',
       forecast_days: String(FORECAST_DAYS),
       // Fetch both unit systems in parallel would require two calls; instead we fetch metric
@@ -977,6 +1035,13 @@ async function fetchForecast(place: GeoPlace): Promise<WeatherForecast | null> {
         windKph,
         windMph: Math.round(windKph / 1.609),
         dryWindows: buildDryWindows(d.hourly, date),
+        hourlyTemperatures: (d.hourly?.time || [])
+          .map((time: string, hourIndex: number) => ({
+            time,
+            tempC: d.hourly.temperature_2m[hourIndex],
+            tempF: Math.round(d.hourly.temperature_2m[hourIndex] * 9 / 5 + 32),
+          }))
+          .filter((reading: { time: string; tempC: number }) => reading.time.startsWith(`${date}T`) && Number.isFinite(reading.tempC)),
       };
     });
 
@@ -993,6 +1058,8 @@ async function resolveForecast(
   timeZone: string,
   lat?: number,
   lon?: number,
+  contextMsg?: string,
+  requireSpecificLocation = false,
 ): Promise<WeatherForecast | null> {
   const places: Array<() => Promise<GeoPlace | null>> = [];
 
@@ -1001,10 +1068,14 @@ async function resolveForecast(
   }
   const cityInMsg = cityFromMessage(msg);
   if (cityInMsg) places.push(() => geocodeByName(cityInMsg));
+  const cityFromContext = contextMsg ? cityFromMessage(contextMsg) : null;
+  if (cityFromContext) places.push(() => geocodeByName(cityFromContext));
   const envCity = process.env.WEATHER_LOCATION?.trim();
   if (envCity) places.push(() => geocodeByName(envCity));
-  const tzCity = cityFromTimezone(timeZone);
-  if (tzCity) places.push(() => geocodeByName(tzCity));
+  if (!requireSpecificLocation) {
+    const tzCity = cityFromTimezone(timeZone);
+    if (tzCity) places.push(() => geocodeByName(tzCity));
+  }
 
   for (const getPlace of places) {
     const place = await getPlace();
@@ -1046,6 +1117,128 @@ function weatherReplyOffline(w: WeatherForecast, targetDate: string, dayLabel: s
   );
 }
 
+function getConditionalScheduleDate(prompt: string, todayStr: string): string | null {
+  const weekdays = DAY_NAMES.map((day) => day.toLowerCase());
+  const requestedWeekday = prompt.match(/\b(sunday|monday|tuesday|wednesday|thursday|friday|saturday)\b/i)?.[1];
+  if (!requestedWeekday) return null;
+
+  const requestedDay = weekdays.indexOf(requestedWeekday.toLowerCase());
+  const nextWeekAnchor = prompt.match(/\bnext\s+(sunday|monday|tuesday|wednesday|thursday|friday|saturday)(?:\s+week)?\b/i)?.[1];
+  const nextWeekAnchorDay = nextWeekAnchor ? weekdays.indexOf(nextWeekAnchor.toLowerCase()) : -1;
+  const asksForNextWeek = /\bnext\s+week\b/i.test(prompt) || /\bnext\s+(?:sunday|monday|tuesday|wednesday|thursday|friday|saturday)\s+week\b/i.test(prompt);
+
+  if (nextWeekAnchorDay >= 0) {
+    const daysUntilAnchor = (nextWeekAnchorDay - dayOfWeek(todayStr) + 7) % 7 || 7;
+    const anchorDate = addDays(todayStr, daysUntilAnchor);
+    const offsetFromAnchor = (requestedDay - nextWeekAnchorDay + 7) % 7;
+    return addDays(anchorDate, offsetFromAnchor);
+  }
+
+  if (asksForNextWeek) {
+    const daysUntilNextMonday = (1 - dayOfWeek(todayStr) + 7) % 7 || 7;
+    const nextMonday = addDays(todayStr, daysUntilNextMonday);
+    return addDays(nextMonday, (requestedDay - 1 + 7) % 7);
+  }
+
+  const daysUntilWeekday = (requestedDay - dayOfWeek(todayStr) + 7) % 7;
+  return addDays(todayStr, daysUntilWeekday);
+}
+
+function getWeatherThreshold(prompt: string, imperial: boolean): { value: number; unit: 'F' | 'C'; strict: boolean } | null {
+  const match = prompt.match(/\b(above|over|higher than|warmer than|at least|no less than)\s+(\d{1,3})(?:\s*°?\s*([fc])\b|\s+degrees?\s*(fahrenheit|celsius|[fc])?\b)?/i);
+  if (!match) return null;
+  const unitText = (match[3] || match[4] || '').toLowerCase();
+  return {
+    value: Number(match[2]),
+    unit: unitText.startsWith('c') ? 'C' : unitText.startsWith('f') ? 'F' : imperial ? 'F' : 'C',
+    strict: !/^(at least|no less than)$/i.test(match[1]),
+  };
+}
+
+function processWeatherConditionalSchedule(
+  prompt: string,
+  events: CalendarEventPayload[],
+  forecast: WeatherForecast | null,
+  todayStr: string,
+  preferences: SchedulingPreferences,
+  imperial: boolean,
+) {
+  const date = getConditionalScheduleDate(prompt, todayStr);
+  const threshold = getWeatherThreshold(prompt, imperial);
+  if (!date || !threshold) {
+    return {
+      reply: 'I can check that and schedule it, but please specify a weekday (for example, “Tuesday next week”) and a temperature threshold (for example, “above 70°F”).',
+      actions: [],
+    };
+  }
+
+  if (!forecast) {
+    return {
+      reply: 'I couldn’t get a weather forecast, so I didn’t schedule the walk. Reply with your city (for example, “Buffalo, NY”) or enable location access, and I’ll check again.',
+      actions: [],
+    };
+  }
+
+  const day = forecast.days.find((item) => item.date === date);
+  if (!day) {
+    return {
+      reply: `I can’t check ${date} because it is outside the available ${FORECAST_DAYS}-day forecast for ${forecast.place}. I did not schedule the walk.`,
+      actions: [],
+    };
+  }
+
+  const high = threshold.unit === 'F' ? day.tempMaxF : day.tempMaxC;
+  const thresholdLabel = `${threshold.strict ? 'above' : 'at least'} ${threshold.value}°${threshold.unit}`;
+  const dateLabel = `${day.weekday}, ${date}`;
+  const highMeetsThreshold = threshold.strict ? high > threshold.value : high >= threshold.value;
+  if (!highMeetsThreshold) {
+    return {
+      reply: `The forecast high for ${dateLabel} in ${forecast.place} is ${high}°${threshold.unit}, not ${thresholdLabel}. I did not schedule the walk.`,
+      actions: [],
+    };
+  }
+
+  const slots = findAvailableTimeSlots('30 minutes', events, date, preferences, 1000)
+    .filter((item) => item.date === date);
+  const slot = slots.find((candidate) => {
+    const hourly = day.hourlyTemperatures.find((reading) =>
+      reading.time.startsWith(`${date}T${candidate.start.slice(0, 2)}:`)
+    );
+    if (!hourly) return false;
+    const temperature = threshold.unit === 'F' ? hourly.tempF : hourly.tempC;
+    return threshold.strict ? temperature > threshold.value : temperature >= threshold.value;
+  });
+  if (!slot) {
+    return {
+      reply: `The forecast high for ${dateLabel} in ${forecast.place} is ${high}°${threshold.unit}, but I couldn’t find a free 30-minute slot during your working hours when the hourly forecast meets ${thresholdLabel}. I did not schedule the walk.`,
+      actions: [],
+    };
+  }
+  const scheduledHour = day.hourlyTemperatures.find((reading) =>
+    reading.time.startsWith(`${date}T${slot.start.slice(0, 2)}:`)
+  );
+  const scheduledTemperature = scheduledHour
+    ? threshold.unit === 'F' ? scheduledHour.tempF : scheduledHour.tempC
+    : high;
+
+  return {
+    reply: `The hourly forecast for ${dateLabel} in ${forecast.place} is ${scheduledTemperature}°${threshold.unit} at ${format12h(slot.start)}, meeting your ${thresholdLabel} condition. I scheduled a 30-minute walk for ${format12h(slot.start)}–${format12h(slot.end)}.`,
+    actions: [{
+      type: 'schedule',
+      event: {
+        title: 'Walk',
+        startDate: date,
+        startTime: slot.start,
+        endDate: date,
+        endTime: slot.end,
+        category: 'personal',
+        description: `Scheduled because the hourly forecast is ${scheduledTemperature}°${threshold.unit} at the start time.`,
+      },
+      reason: `Hourly forecast meets ${thresholdLabel}`,
+    }],
+  };
+}
+
 async function startServer() {
   const app = express();
   const PORT = 3000;
@@ -1077,10 +1270,32 @@ async function startServer() {
     const { todayStr, nowMinutes, iso: nowIso } = resolveNow(currentDateTime, timeZone);
     const latestUserMessage = messages[messages.length - 1]?.content || '';
     const imperial = timeZone.startsWith('America/') || timeZone.startsWith('Pacific/Honolulu');
+    const pendingWeatherSchedule = getPendingConditionalWeatherSchedule(messages, imperial);
+    const locationFollowUp = pendingWeatherSchedule && locationFromConversation(messages)
+      ? pendingWeatherSchedule
+      : null;
+    const conditionalWeatherPrompt = isConditionalWeatherScheduleRequest(latestUserMessage, imperial)
+      ? latestUserMessage
+      : locationFollowUp;
+    const isConditionalWeatherSchedule = Boolean(conditionalWeatherPrompt);
 
     // Fetch weather only for weather-related messages (keeps non-weather chat fast)
+    const weatherContext = messages
+      .filter((message) => message.role === 'user')
+      .slice(-5)
+      .map((message) => message.content)
+      .join(' ');
+    const conversationLocation = locationFromConversation(messages);
     const weather = WEATHER_KEYWORDS.test(latestUserMessage)
-      ? await resolveForecast(latestUserMessage, timeZone, latitude, longitude)
+      || isConditionalWeatherSchedule
+      ? await resolveForecast(
+          conditionalWeatherPrompt || latestUserMessage,
+          timeZone,
+          latitude,
+          longitude,
+          conversationLocation ? `in ${conversationLocation}` : weatherContext,
+          isConditionalWeatherSchedule,
+        )
       : null;
     const previousAssistantMessage = messages.slice(0, -1).reverse().find((message) => message.role === 'assistant');
     const previousMessages = messages.slice(0, -1);
@@ -1121,6 +1336,16 @@ async function startServer() {
       return res.json(processNaturalLanguageCalendar(schedulingPrompt, events, todayStr));
     }
     const preferences = getSchedulingPreferences(req.body.schedulingPreferences);
+    if (isConditionalWeatherSchedule) {
+      return res.json(processWeatherConditionalSchedule(
+        conditionalWeatherPrompt || latestUserMessage,
+        events,
+        weather,
+        todayStr,
+        preferences,
+        imperial,
+      ));
+    }
     if (/\b(find|suggest|recommend)\b.{0,35}\b(time|slot|availability)\b|\bwhen am i (?:free|available)\b|\bavailable slots?\b/i.test(latestUserMessage)) {
       const slots = findAvailableTimeSlots(latestUserMessage, events, todayStr, preferences);
       if (slots.length === 0) {
