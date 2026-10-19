@@ -14,6 +14,15 @@ export interface CalendarEvent {
   isAllDay?: boolean;
   createdByAi?: boolean;
   color?: string;
+  reminderMinutesBefore?: number;
+}
+
+export interface SchedulingPreferences {
+  workDays: number[];
+  workdayStart: string;
+  workdayEnd: string;
+  preferredTimeOfDay: 'any' | 'morning' | 'afternoon';
+  bufferMinutes: number;
 }
 
 export interface ChatMessage {
@@ -30,3 +39,5 @@ export interface ChatMessage {
 }
 
 export type CalendarViewMode = 'month' | 'week' | 'day' | 'agenda';
+
+export type CalendarTheme = 'rose' | 'lavender' | 'ocean' | 'midnight' | 'halloween';

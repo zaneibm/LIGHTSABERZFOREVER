@@ -39,6 +39,7 @@ export const EventModal: React.FC<EventModalProps> = ({
   const [location, setLocation] = useState('');
   const [attendeesInput, setAttendeesInput] = useState('');
   const [description, setDescription] = useState('');
+  const [reminderMinutesBefore, setReminderMinutesBefore] = useState<number | undefined>();
   const [error, setError] = useState('');
 
   useEffect(() => {
@@ -52,6 +53,7 @@ export const EventModal: React.FC<EventModalProps> = ({
       setLocation(event.location || '');
       setAttendeesInput(event.attendees ? event.attendees.join(', ') : '');
       setDescription(event.description || '');
+      setReminderMinutesBefore(event.reminderMinutesBefore);
       setError('');
     }
   }, [event]);
@@ -84,6 +86,7 @@ export const EventModal: React.FC<EventModalProps> = ({
       attendees: attendees.length > 0 ? attendees : undefined,
       description: description.trim() || undefined,
       createdByAi: event?.createdByAi || false,
+      reminderMinutesBefore,
     };
 
     onSave(updatedEvent);
@@ -212,6 +215,25 @@ export const EventModal: React.FC<EventModalProps> = ({
             <textarea rows={3} value={description} onChange={(e) => setDescription(e.target.value)}
               placeholder="Add agenda, objectives, or notes..."
               className={`${inputCls} resize-none`} />
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold text-slate-300 mb-1">
+              Reminder
+            </label>
+            <select
+              value={reminderMinutesBefore ?? ''}
+              onChange={(e) => setReminderMinutesBefore(e.target.value ? Number(e.target.value) : undefined)}
+              className={inputCls}
+            >
+              <option value="">No reminder</option>
+              <option value="5">5 minutes before</option>
+              <option value="10">10 minutes before</option>
+              <option value="15">15 minutes before</option>
+              <option value="30">30 minutes before</option>
+              <option value="60">1 hour before</option>
+              <option value="1440">1 day before</option>
+            </select>
           </div>
 
           {/* Actions */}

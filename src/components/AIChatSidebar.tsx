@@ -15,7 +15,7 @@ import {
   MapPin,
 } from 'lucide-react';
 import { ChronosLogo } from './ChronosLogo';
-import { CalendarEvent, ChatMessage } from '../types/calendar';
+import { CalendarEvent, CalendarTheme, ChatMessage } from '../types/calendar';
 import { formatTime12h, parseDate } from '../utils/dateUtils';
 import type { LocationState } from '../utils/useLocation';
 
@@ -30,6 +30,7 @@ interface AIChatSidebarProps {
   allEvents: CalendarEvent[];
   locationState: LocationState;
   onRequestLocation: () => void;
+  theme: CalendarTheme;
 }
 
 export const AIChatSidebar: React.FC<AIChatSidebarProps> = ({
@@ -43,6 +44,7 @@ export const AIChatSidebar: React.FC<AIChatSidebarProps> = ({
   allEvents,
   locationState,
   onRequestLocation,
+  theme,
 }) => {
   const [input, setInput] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -154,8 +156,22 @@ export const AIChatSidebar: React.FC<AIChatSidebarProps> = ({
           >
             "Free time on Wednesday?"
           </button>
+          <button
+            onClick={() => handlePromptClick('Find a time this week for a 30-minute meeting')}
+            className="text-[11px] px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-indigo-900/40 text-slate-300 hover:text-indigo-200 border border-slate-700/80 whitespace-nowrap transition"
+          >
+            "Find a time this week"
+          </button>
         </div>
       </div>
+
+      {theme === 'halloween' && (
+        <div className="flex items-center justify-center gap-2 px-3 py-1 border-b border-orange-100 bg-orange-50">
+          <img src="/halloween/ghost-with-pumpkin.png" alt="" aria-hidden="true" className="h-9 w-auto object-contain" />
+          <span className="text-[11px] font-semibold tracking-wide text-orange-600">Happy Halloween</span>
+          <img src="/halloween/ghost-sparkles.png" alt="" aria-hidden="true" className="h-9 w-auto object-contain" />
+        </div>
+      )}
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar bg-gray-50/40">
